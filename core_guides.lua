@@ -1,12 +1,23 @@
 -- =========================
 -- QuestShell core_guides.lua
--- Guide metadata/data access, chapters, ordering, loader, jump/advance
+-- Guide metadata/data access, chapter helpers, loader, jump/advance
+-- Compatibility: Vanilla/Turtle (Lua 5.0)
 -- =========================
-
--- Back-compat:
---  - Old single-zone guide: QuestShellGuides["Name"] = { steps = {...} } or just an array
---  - Campaign guide: QuestShellGuides["Name"] = { title=..., minLevel=..., maxLevel=..., chapters = { {title=..., steps={...}}, ... } }
-
+-- Public surface:
+--   QS_GuideMeta(name?)                -> {title, steps}|{title, chapters}
+--   QS_GuideHasChapters(name?)         -> boolean
+--   QS_ChapterCount(name?)             -> number
+--   QS_GuideState()                    -> saved-state table for active guide
+--   QS_CurrentChapterIndex()           -> number
+--   QS_ChapterMeta(idx)                -> chapter meta for current guide
+--   QS_GuideData()                     -> steps[] for current chapter
+--   QS_CurrentStep()                   -> step table for current step
+--   QuestShell.SetChapter(idx)         -> switches chapter, finds next uncompleted step
+--   QS_AllGuidesOrdered()              -> array of guide keys sorted by level/title
+--   QuestShell.LoadGuide(name)         -> set active guide, reset chapter/step
+--   QS_LoadNextGuideIfAny()            -> bool; loads next ordered guide if exists
+--   QuestShell.JumpToStep(idx)         -> set currentStep within chapter
+-- =========================
 
 -- Safe UI refresher (works even if QuestShellUI_UpdateAll isn't defined yet)
 local function QS_UI_RefreshAll()
@@ -31,14 +42,14 @@ local function QS_UI_RefreshAll()
     end
 end
 
--- meta for a guide key (returns table with .steps or .chapters)
+-- --- Guide meta resolution ---
+-- Accepts: old single-zone (array or {steps=...}) OR new campaign ({chapters=...})
 function QS_GuideMeta(name)
     local key = name or QuestShell.activeGuide
     local g = QuestShellGuides and QuestShellGuides[key]
     if type(g) == "table" then
-        -- if it's an old-format plain array of steps, synthesize metadata wrapper
         if not g.steps and not g.chapters then
-            return { title = key, steps = g }
+            return { title = key, steps = g } -- legacy array → synthesize
         end
         return g
     end
@@ -56,7 +67,7 @@ function QS_ChapterCount(name)
     return 1
 end
 
--- current chapter index from DB
+-- ----- Saved state accessors -----
 function QS_GuideState()
     return QuestShellDB.guides[QuestShell.activeGuide]
 end
@@ -66,32 +77,38 @@ function QS_CurrentChapterIndex()
     return (st and st.currentChapter) or 1
 end
 
--- chapter meta (synthesizes a single chapter for old-format guides)
+-- Chapter meta (synthesizes a single chapter for legacy format)
 function QS_ChapterMeta(idx)
     local m = QS_GuideMeta()
     if m.chapters then
         return m.chapters[idx]
     else
-        -- single-chapter synthesized from legacy guide
         local steps = (m.steps and m.steps) or {}
-        return { id="chapter1", title=(m.title or QuestShell.activeGuide), zone = m.zone, minLevel = m.minLevel, maxLevel = m.maxLevel, steps = steps }
+        return {
+            id       = "chapter1",
+            title    = (m.title or QuestShell.activeGuide),
+            zone     = m.zone,
+            minLevel = m.minLevel,
+            maxLevel = m.maxLevel,
+            steps    = steps
+        }
     end
 end
 
--- the steps table for the *current* chapter
+-- Steps for the *current* chapter
 function QS_GuideData()
     local chMeta = QS_ChapterMeta(QS_CurrentChapterIndex())
     return chMeta and chMeta.steps
 end
 
--- current step object (within current chapter)
+-- Current step object (within current chapter)
 function QS_CurrentStep()
     local d, s = QS_GuideData(), QS_GuideState()
     if not d or not s then return nil end
     return d[s.currentStep]
 end
 
--- change chapter, clamp, set currentStep to first not-completed
+-- ----- Chapter switching -----
 function QuestShell.SetChapter(idx)
     local n = QS_ChapterCount()
     if idx < 1 then idx = 1 end
@@ -115,7 +132,7 @@ function QuestShell.SetChapter(idx)
     QS_UI_RefreshAll()
 end
 
--- ordered list of guide keys
+-- Ordered list of guide keys: level (min,max), then title
 function QS_AllGuidesOrdered()
     local names = {}
     for k,_ in pairs(QuestShellGuides or {}) do names[table.getn(names)+1] = k end
@@ -130,7 +147,7 @@ function QS_AllGuidesOrdered()
     return names
 end
 
--- load a guide (resets to chapter 1, step 1)
+-- Load a guide (resets to chapter 1, step 1)
 function QuestShell.LoadGuide(name)
     if not (QuestShellGuides and QuestShellGuides[name]) then
         QS_Warn("Guide not found: "..tostring(name)); return
@@ -151,7 +168,7 @@ function QuestShell.LoadGuide(name)
     QS_UI_RefreshAll()
 end
 
--- advance to next guide in list, if any
+-- Advance to next guide in ordered list, if any
 function QS_LoadNextGuideIfAny()
     local names = QS_AllGuidesOrdered()
     local cur = QuestShell.activeGuide
@@ -167,7 +184,7 @@ function QS_LoadNextGuideIfAny()
     return false
 end
 
--- jump to step within current chapter
+-- Jump to step within current chapter
 function QuestShell.JumpToStep(idx)
     local d = QS_GuideData(); if not d then return end
     if idx < 1 then idx = 1 end

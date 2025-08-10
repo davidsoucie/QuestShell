@@ -1,11 +1,19 @@
 -- =========================
--- QuestShell UI — Steps (even rows + zebra + spacing + resize reflow)
+-- QuestShell UI — Steps
+-- Scrollable list of all steps in current chapter (with zebra rows, checkboxes)
+-- Compatibility: Vanilla/Turtle (Lua 5.0)
 -- =========================
+-- Public:
+--   QuestShellUI.ToggleList()
+--   QuestShellUI.UpdateList(steps, currentIndex, completedMap)
+-- Notes:
+--   - Uses absolute positioning instead of height autos to avoid 1.12 quirks.
+--   - Fixed indents for bullet/icon/text to keep columns aligned.
+-- =========================
+
 QuestShellUI = QuestShellUI or {}
 
--- ------------------------
--- Saved UI state
--- ------------------------
+-- ------------------------ Saved UI state ------------------------
 local function EnsureDB()
     QuestShellDB = QuestShellDB or {}
     QuestShellDB.ui = QuestShellDB.ui or {}
@@ -16,9 +24,7 @@ local function EnsureDB()
     if QuestShellDB.ui.locked == nil then QuestShellDB.ui.locked = false end
 end
 
--- ------------------------
--- Textures / constants
--- ------------------------
+-- ------------------------ Textures / constants ------------------------
 local TEX_TALK   = "Interface\\GossipFrame\\GossipGossipIcon"
 local TEX_ACCEPT = "Interface\\GossipFrame\\AvailableQuestIcon"
 local TEX_TURNIN = "Interface\\GossipFrame\\ActiveQuestIcon"
@@ -47,9 +53,7 @@ local function SetClassIcon(tex)
     if c then tex:SetTexCoord(c[1],c[2],c[3],c[4]) else tex:SetTexCoord(0,1,0,1) end
 end
 
--- ------------------------
--- Layout (fixed indent for ALL lines)
--- ------------------------
+-- ------------------------ Layout ------------------------
 local GUTTER_BULLET_W = 12
 local GUTTER_GAP       = 4
 local ICON_W           = 12
@@ -63,16 +67,12 @@ local SELECT_ALPHA     = 0.10
 
 local TEXT_X = GUTTER_BULLET_W + GUTTER_GAP + ICON_W + GUTTER_GAP
 
--- ------------------------
--- Locals
--- ------------------------
+-- ------------------------ Locals ------------------------
 local listFrame, header, headerTitle, headerLevelFS, headerStepFS
 local scroll, scrollChild, rowPool, meterFS
 local _lastSteps, _lastCurrentIndex, _lastCompletedMap
 
--- ------------------------
--- Helpers
--- ------------------------
+-- ------------------------ Helpers ------------------------
 local function ClampAndPlace(f, x, y, fw, fh)
     if not f or not UIParent then return end
     f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", x or 0, y or 0); f:Show()
@@ -85,18 +85,6 @@ local function ClampAndPlace(f, x, y, fw, fh)
     if cy < -(sh - hh) then cy = -(sh - hh) end
     f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", cx, cy)
     return cx, cy
-end
-
-local function KindForText(t)
-    local s = string.lower(t or "")
-    if string.find(s, "slain") or string.find(s, "kill") then return "kill" end
-    if string.find(s, ":") or string.find(s, "collect") or string.find(s, "bring") then return "loot" end
-    return "other"
-end
-local function TexForKind(k)
-    if k == "kill" then return TEX_KILL end
-    if k == "loot" then return TEX_LOOT end
-    return TEX_OTHER
 end
 
 local function MeasureTextHeight(text, width)
@@ -114,9 +102,7 @@ local function MeasureTextHeight(text, width)
     return math.ceil(h)
 end
 
--- ------------------------
--- Row factory
--- ------------------------
+-- ------------------------ Row factory ------------------------
 local function MakeRow(index)
     local row = CreateFrame("Button", "QuestShellStepRow"..tostring(index), scrollChild)
     row:SetHeight(24)
@@ -195,9 +181,7 @@ local function ResizeRowsToWidth()
     end
 end
 
--- ------------------------
--- Header
--- ------------------------
+-- ------------------------ Header ------------------------
 local function SetHeaderFromChapter()
     local meta = QS_ChapterMeta and QS_ChapterMeta(QS_CurrentChapterIndex() or 1) or nil
     local gmeta = QS_GuideMeta and QS_GuideMeta() or {}
@@ -214,9 +198,7 @@ local function SetHeaderFromChapter()
     headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
 end
 
--- ------------------------
--- Build visual rows for a single step
--- ------------------------
+-- ------------------------ Build visual rows for a single step ------------------------
 local function BuildRows(step, fallbackTitle, forceComplete)
     local rows, c = {}, 0
     local stype = string.upper(step and step.type or "")
@@ -250,7 +232,6 @@ local function BuildRows(step, fallbackTitle, forceComplete)
         local note = (step and step.note) or (fallbackTitle or "")
         c=c+1; rows[c] = { bullet=false, icon=nil, text=note }
 
-        -- NEW: build objective rows from the guide, overlaying counts when possible
         local orows = QS_BuildObjectiveRows and QS_BuildObjectiveRows(step, forceComplete) or {}
         local k = 1
         while k <= table.getn(orows) do
@@ -263,9 +244,7 @@ local function BuildRows(step, fallbackTitle, forceComplete)
     return rows
 end
 
--- ------------------------
--- Render (absolute positioning; fixed left indent + spacing)
--- ------------------------
+-- ------------------------ Render (absolute positioning) ------------------------
 local function RebuildContent(steps, currentIndex, completedMap)
     local total = (steps and table.getn(steps)) or 0
     local y = 0
@@ -358,9 +337,7 @@ local function Relayout()
     end
 end
 
--- ------------------------
--- Create frame
--- ------------------------
+-- ------------------------ Create frame ------------------------
 local function CreateList()
     EnsureDB(); if listFrame then return end
     rowPool = {}
@@ -465,9 +442,7 @@ local function CreateList()
     SetHeaderFromChapter()
 end
 
--- ------------------------
--- Public API
--- ------------------------
+-- ------------------------ Public API ------------------------
 function QuestShellUI.ToggleList()
     if not listFrame then CreateList() end
     if listFrame:IsShown() then listFrame:Hide() else listFrame:Show() end

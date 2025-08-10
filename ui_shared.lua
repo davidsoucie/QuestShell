@@ -1,9 +1,10 @@
 -- =========================
--- QuestShell UI — shared helpers
+-- QuestShell ui_shared.lua
+-- Small UI helpers shared by tracker/steps UIs.
 -- =========================
 QuestShellUI = QuestShellUI or {}
 
--- one-line short label for a step (concise: Title + gray note)
+-- Short single-line label for a step (Title + gray note)
 function QS_UI_ShortStepLine(step)
     if not step then return "" end
     local t = (step.title or "")
@@ -13,7 +14,7 @@ function QS_UI_ShortStepLine(step)
     return t
 end
 
--- full body (note + coords + optional progress)
+-- Full body (note + coords + optional progress)
 function QS_UI_FullBody(step, progressText)
     if not step then return "" end
     local lines = {}
@@ -29,7 +30,7 @@ function QS_UI_FullBody(step, progressText)
     return table.concat(lines, "\n")
 end
 
--- ===== unified toggle logic (tracker + steps) =====
+-- ===== Unified toggle logic for steps =====
 local function QS_UI_GetState()
     if not (QuestShell and QuestShell.activeGuide and QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]) then
         return nil

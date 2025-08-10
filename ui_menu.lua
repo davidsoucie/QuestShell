@@ -1,5 +1,6 @@
 -- =========================
 -- QuestShell UI — Gear Menu (Guides & Chapters)
+-- Modal menu listing guides on the left and chapters on the right.
 -- =========================
 QuestShellUI = QuestShellUI or {}
 
@@ -124,7 +125,7 @@ local function RefreshChaptersForGuide(name)
             b:SetHeight(20)
             b:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
             b:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
-            b:SetText("...") -- avoid nil text on 1.12 template
+            b:SetText("...")
             b:SetScript("OnClick", function()
                 if QuestShell and QuestShell.LoadGuide then QuestShell.LoadGuide(b._guide) end
                 if QuestShell and QuestShell.SetChapter then QuestShell.SetChapter(b._ch) end
@@ -172,7 +173,7 @@ local function RefreshGuides()
             b:SetHeight(20)
             b:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
             b:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
-            b:SetText("...") -- avoid nil text on 1.12 template
+            b:SetText("...")
             b:SetScript("OnClick", function()
                 RefreshChaptersForGuide(b._name)
             end)

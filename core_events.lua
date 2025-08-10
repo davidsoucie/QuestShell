@@ -8,7 +8,7 @@
 -- QS_ChapterCount(), QS_LoadNextGuideIfAny(), QuestShell.SetChapter,
 -- QS_UI_IsStepCompleted(i), QS_UI_SetStepCompleted(i, bool),
 -- QS_Print(msg), QS_D(msg)
--- + From utils: QS_CountItemInBags, QS_FindItemInBags
+-- + From utils: QS_CountItemInBags, QS_FindItemInBags, QS_IsQuestObjectivesCompleteByIndex
 
 -- ------------------------------------------------------------
 -- Local helpers / state
@@ -51,7 +51,7 @@ local function QS__LogQuestID(logIndex)
     return nil
 end
 
--- Collect expected labels for an ACCEPT step ...
+-- Collect expected labels for an ACCEPT step (used to disambiguate)
 local function QS__CollectExpectedLabelsForStep(stepIndex, steps)
     local labels, s = {}, (steps and steps[stepIndex]) or nil
     if not s then return labels end
@@ -83,6 +83,7 @@ local function QS__CollectExpectedLabelsForStep(stepIndex, steps)
     return labels
 end
 
+-- Score a log quest against labels (rough disambiguator for ACCEPT)
 local function QS__ScoreLogIndexAgainstLabels(logIndex, labels)
     if not logIndex or not labels or table.getn(labels) == 0 then return 0 end
     local n = GetNumQuestLeaderBoards(logIndex) or 0
@@ -93,7 +94,7 @@ local function QS__ScoreLogIndexAgainstLabels(logIndex, labels)
             local low = string.lower(txt)
             local k = 1
             while labels[k] do
-                local lab = string.lower(labels[k])
+                local lab = string.lower(labels[k] or "")
                 if lab ~= "" and string.find(low, lab, 1, true) then score = score + 1 end
                 k = k + 1
             end
@@ -375,7 +376,6 @@ local function QS__UseItemSatisfied(step)
 
     -- detect count drop (BAG_UPDATE sets lastChangeTime)
     if itemTrack.itemId == id and itemTrack.lastChangeTime and (Now() - itemTrack.lastChangeTime) <= 2.0 then
-        -- recent change in bags for this item id → consider satisfied
         return true
     end
 
@@ -388,12 +388,10 @@ end
 ev:SetScript("OnEvent", function()
     local event = event -- vanilla arg
     if event == "VARIABLES_LOADED" or event == "PLAYER_ENTERING_WORLD" then
-        -- populate UI after reload/login
         if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
         return
 
     elseif event == "BAG_UPDATE" then
-        -- Track count changes for current USE_ITEM step
         local step = QS_CurrentStep and QS_CurrentStep() or nil
         if step and string.upper(step.type or "") == "USE_ITEM" and step.itemId and QS_CountItemInBags then
             local cur = QS_CountItemInBags(step.itemId)
@@ -405,7 +403,6 @@ ev:SetScript("OnEvent", function()
         return
 
     elseif event == "BAG_UPDATE_COOLDOWN" then
-        -- Re-check USE_ITEM completion
         local step = QS_CurrentStep and QS_CurrentStep() or nil
         if step and string.upper(step.type or "") == "USE_ITEM" then
             if QS__UseItemSatisfied(step) then
@@ -422,17 +419,17 @@ ev:SetScript("OnEvent", function()
             return
         end
 
-        -- NEW: bridge gossip -> greeting so we can pick the exact quest among many
+        -- bridge gossip -> greeting when possible
         if step and (step.type == "ACCEPT" or step.type == "TURNIN") then
             if TryOpenGreetingFromGossip and TryOpenGreetingFromGossip() then
                 if QS_D then QS_D("Opened QUEST_GREETING from gossip.") end
                 return
             end
 
-            -- Fallback: stay on gossip and select directly when unambiguous
+            -- Fallback: select directly when unambiguous
             if QS_HaveGossip and QS_HaveGossip() then
                 if step.type == "ACCEPT" and QS_GossipAvailEntries then
-                    local avail = QS_GossipAvailEntries()  -- { {idx=1,title="."}, . }
+                    local avail = QS_GossipAvailEntries()
                     local idx, count, i = nil, 0, 1
                     while avail[i] do
                         if avail[i].title == step.title then
@@ -443,7 +440,7 @@ ev:SetScript("OnEvent", function()
                     end
                     if idx and count == 1 then
                         if QS_D then QS_D("Selecting gossip available quest: "..tostring(step.title)) end
-                        SelectGossipAvailableQuest(idx)  -- opens QUEST_DETAIL
+                        SelectGossipAvailableQuest(idx)
                         return
                     elseif QS_D then
                         QS_D("Gossip available ambiguous for "..tostring(step.title).." (matches="..tostring(count)..")")
@@ -454,7 +451,7 @@ ev:SetScript("OnEvent", function()
                     while active[i] do
                         if active[i].title == step.title then
                             if QS_D then QS_D("Selecting gossip active quest: "..tostring(step.title)) end
-                            SelectGossipActiveQuest(active[i].idx)  -- opens progress/complete
+                            SelectGossipActiveQuest(active[i].idx)
                             return
                         end
                         i = i + 1
@@ -473,7 +470,7 @@ ev:SetScript("OnEvent", function()
         end
 
         if step.type == "ACCEPT" then
-            local idx = QS__SelectAvailableIndexForAccept(step)   -- opens QUEST_DETAIL
+            local idx = QS__SelectAvailableIndexForAccept(step)
             if idx then
                 if QS_D then QS_D("Selecting available quest #"..tostring(idx).." for "..tostring(step.title)) end
                 SelectAvailableQuest(idx)
@@ -510,7 +507,7 @@ ev:SetScript("OnEvent", function()
         if step.type == "ACCEPT" and title == step.title then
             awaitingAcceptTitle = title
             if QS_D then QS_D("Accepting quest: "..tostring(title)) end
-            AcceptQuest()   -- will confirm in QUEST_ACCEPTED
+            AcceptQuest()
             return
         end
         return
@@ -580,6 +577,7 @@ ev:SetScript("OnEvent", function()
         return
 
     elseif event == "QUEST_LOG_UPDATE" then
+        -- confirm accepts (legacy path)
         if awaitingAcceptTitle then
             local st = QS_GuideState and QS_GuideState() or nil
             local cur = st and st.currentStep or 1
@@ -607,6 +605,21 @@ ev:SetScript("OnEvent", function()
                     end
                 end
                 i = i + 1
+            end
+        end
+
+        -- NEW: auto-advance COMPLETE steps when all objectives are done
+        do
+            local st = QS_GuideState and QS_GuideState() or nil
+            local cur = st and st.currentStep or 1
+            local steps = QS_GuideData and QS_GuideData() or {}
+            local s = steps[cur]
+            if s and string.upper(s.type or "") == "COMPLETE" and s.title then
+                local idx = QS_FindQuestLogIndexByTitle and QS_FindQuestLogIndexByTitle(s.title) or nil
+                if idx and QS_IsQuestObjectivesCompleteByIndex and QS_IsQuestObjectivesCompleteByIndex(idx) then
+                    if QS_D then QS_D("Objectives complete for '"..(s.title or "").."'; advancing step.") end
+                    QS_AdvanceStep()
+                end
             end
         end
 

@@ -1,6 +1,16 @@
 -- =========================
 -- QuestShell core_gossip.lua
 -- Gossip availability/active parsing + greeting bridge
+-- Compatibility: Vanilla/Turtle (Lua 5.0)
+-- =========================
+-- Purpose:
+--   - Normalize gossip lists into simple arrays the core can reason about.
+--   - Provide a helper to click the "Quest" option on gossip to open greeting.
+-- Public:
+--   QS_HaveGossip() -> boolean
+--   QS_GossipAvailEntries()  -> { {idx=<1..>, title="..."}, ... }
+--   QS_GossipActiveEntries() -> { {idx=<1..>, title="..."}, ... }
+--   TryOpenGreetingFromGossip() -> bool (true if it selected an option)
 -- =========================
 
 function QS_HaveGossip()
@@ -10,7 +20,7 @@ function QS_HaveGossip()
            (type(SelectGossipOption) == "function")
 end
 
--- Entries as { idx = realQuestIndex, title = "..." }
+-- Parse alternating gossip payload into clean entries.
 function QS_GossipAvailEntries()
     if not QS_HaveGossip() then return {} end
     local raw = { GetGossipAvailableQuests() }
@@ -43,6 +53,7 @@ function QS_GossipActiveEntries()
     return out
 end
 
+-- If gossip shows a "Quest" option, click it to get QUEST_GREETING.
 function TryOpenGreetingFromGossip()
     if not QS_HaveGossip() then return false end
     local opt = { GetGossipOptions() }  -- pairs: text, type, text, type...

@@ -1,6 +1,16 @@
 -- =========================
--- QuestShell UI — Arrow (Vanilla/Turtle 1.12)
--- OFF by default. Nothing is drawn unless QuestShellDB.ui.arrowEnabled == true
+-- QuestShell UI — Arrow
+-- Minimal orientation/approx distance arrow widget (off by default)
+-- Compatibility: Vanilla/Turtle (Lua 5.0)
+-- =========================
+-- Behavior:
+--   - Only shows if QuestShellDB.ui.arrowEnabled == true (saved variable gate).
+--   - If a TRAVEL step is active and the arrow is enabled, core_events primes it
+--     via QuestShellUI.ArrowSet(map, x, y, title).
+-- Public:
+--   QuestShellUI_AttachArrowToTracker(trackerFrame) -- optional positioning
+--   QuestShellUI.ArrowSet(map, x, y, title)
+--   QuestShellUI.ArrowClear()
 -- =========================
 
 QuestShellUI = QuestShellUI or {}

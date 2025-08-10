@@ -1,11 +1,19 @@
 -- =========================
--- QuestShell UI — Tracker (unified rows, aligned padding, header checkbox, font scale)
--- Vanilla/Turtle 1.12 safe (no '#' length operator, no 'self')
+-- QuestShell UI — Tracker
+-- Compact tracker for the current step with: header, checkbox, rows with icons.
+-- Compatibility: Vanilla/Turtle (Lua 5.0)
 -- =========================
+-- Public:
+--   QuestShellUI.Update(title, typ, body)    -- internal: called by core
+--   QuestShellUI.SetFontScale(scale)         -- 0.6..1.8
+-- Notes:
+--   - Uses fixed slot widths for bullet/icon for reliable alignment in 1.12.
+--   - No 'self' / no '#' operator; uses table.getn, etc.
+-- =========================
+
 QuestShellUI = QuestShellUI or {}
 
--- -------------------------
--- Saved vars
+-- ------------------------- Saved vars -------------------------
 local function EnsureDB()
     QuestShellDB = QuestShellDB or {}
     QuestShellDB.ui = QuestShellDB.ui or {}
@@ -17,26 +25,7 @@ local function EnsureDB()
     if QuestShellDB.ui.trackerFontScale == nil then QuestShellDB.ui.trackerFontScale = 1.0 end
 end
 
--- -------------------------
--- Quest log helpers
-local function FindQuestLogIndexByTitle(title)
-    if not title then return nil end
-    local n = GetNumQuestLogEntries() or 0
-    local i = 1
-    while i <= n do
-        local t, _, _, _, isHeader = GetQuestLogTitle(i)
-        if not isHeader and t == title then return i end
-        i = i + 1
-    end
-    return nil
-end
-
--- -------------------------
--- Frame state
-local tracker, header, headerStepFS, chk
-local content, rowPool
-
--- small textures
+-- ------------------------- Constants -------------------------
 local TEX_TALK   = "Interface\\GossipFrame\\GossipGossipIcon"
 local TEX_ACCEPT = "Interface\\GossipFrame\\AvailableQuestIcon"
 local TEX_TURNIN = "Interface\\GossipFrame\\ActiveQuestIcon"
@@ -44,16 +33,17 @@ local TEX_KILL   = "Interface\\Icons\\Ability_DualWield"
 local TEX_LOOT   = "Interface\\Icons\\INV_Misc_Bag_08"
 local TEX_OTHER  = "Interface\\Icons\\INV_Misc_Note_01"
 local TEX_BULLET = "Interface\\Buttons\\UI-CheckBox-Up"        -- empty box
-local TEX_CHECK  = "Interface\\Buttons\\UI-CheckBox-Check"      -- tick (we'll tint green)
+local TEX_CHECK  = "Interface\\Buttons\\UI-CheckBox-Check"      -- tick (green when done)
 local TEX_RUN    = "Interface\\Icons\\Ability_Rogue_Sprint"
 local TEX_USE    = "Interface\\Icons\\INV_Misc_Gear_02"
 
--- layout
 local LEFT_PAD, RIGHT_PAD = 8, 10
-local SLOT_W, GAP = 12, 4          -- bullet/icon slot size + gap
+local SLOT_W, GAP = 12, 4
 local ROW_VGAP = 3
 
--- font scaling
+-- ------------------------- Frame state -------------------------
+local tracker, header, headerStepFS, chk
+local content, rowPool
 local baseHeaderSize, baseRowSize = nil, nil
 
 local function ContentWidth()
@@ -77,8 +67,7 @@ local function ClampAndPlace(f, x, y, fw, fh)
     return cx, cy
 end
 
--- -------------------------
--- Row renderer
+-- ------------------------- Row renderer -------------------------
 local function EnsureRowPool() if rowPool then return end; rowPool = {} end
 
 local function AcquireRow(i)
@@ -136,6 +125,55 @@ local function QS_TrackerApplyFontScale()
     end
 end
 
+-- Build rows for any step
+local function BuildRows(step, fallbackTitle, forceComplete)
+    local rows, c = {}, 0
+    local stype = string.upper(step and step.type or "")
+
+    if stype == "ACCEPT" or stype == "TURNIN" then
+        local npc = step and step.npc
+        local who = (type(npc) == "table" and npc.name) or (type(npc) == "string" and npc) or "the quest giver"
+        c=c+1; rows[c] = { icon=TEX_TALK, text=("Talk to "..who), bullet=false }
+        c=c+1; rows[c] = { icon=(stype=="TURNIN" and TEX_TURNIN or TEX_ACCEPT), text=(step and step.title) or "", bullet=false }
+
+    elseif stype == "TRAVEL" then
+        local note = (step and step.note) or "Travel to the marked location."
+        local cmeta = step and step.coords or {}
+        local where = ""
+        if cmeta and cmeta.x and cmeta.y then
+            local z = cmeta.map or ""
+            where = string.format("(%.1f, %.1f %s)", cmeta.x, cmeta.y, z)
+        end
+        c=c+1; rows[c] = { icon=TEX_RUN, text=note, bullet=false }
+        if where ~= "" then
+            c=c+1; rows[c] = { icon=nil, text=where, bullet=false }
+        end
+
+    elseif stype == "USE_ITEM" then
+        local nameTxt = step and (step.itemName or ("Item ID "..tostring(step.itemId or "?")))
+        local tar = (step and step.npc and step.npc.name) and (" with "..step.npc.name.." selected") or ""
+        local line = "Use: "..(nameTxt or "item")..tar
+        c=c+1; rows[c] = { icon=TEX_USE, text=line, bullet=false }
+
+    else
+        local note = (step and step.note) or (fallbackTitle or "")
+        c=c+1; rows[c] = { icon=nil, text=note, bullet=false }
+
+        -- Build objective rows from guide, overlaying counts when possible
+        local orows = QS_BuildObjectiveRows and QS_BuildObjectiveRows(step, forceComplete) or {}
+        local j = 1
+        while j <= table.getn(orows) do
+            local R = orows[j]
+            local kind = R.kind or "other"
+            local icon = (kind=="kill" and TEX_KILL) or (kind=="loot" and TEX_LOOT) or TEX_OTHER
+            c=c+1; rows[c] = { icon=icon, text=(R.text or ""), bullet=true, done=(R.done and true or false) }
+            j = j + 1
+        end
+    end
+
+    return rows
+end
+
 local function RenderRows(rows)
     local prev = nil
     local i = 1
@@ -146,14 +184,14 @@ local function RenderRows(rows)
         r:ClearAllPoints()
         r:SetPoint("TOPLEFT", prev or content, prev and "BOTTOMLEFT" or "TOPLEFT", 0, prev and -ROW_VGAP or 0)
 
-        -- bullet slot (always reserved)
+        -- bullet slot
         r.bullet:ClearAllPoints(); r.bullet:SetPoint("LEFT", r, "LEFT", 0, 0)
         if data.bullet then
             r.bullet:Show()
             r.bullet:SetVertexColor(1, 1, 1, 1)
             if data.done then
                 r.check:SetAlpha(1)
-                r.check:SetVertexColor(0.20, 1.00, 0.20) -- green tick for done
+                r.check:SetVertexColor(0.20, 1.00, 0.20)
             else
                 r.check:SetAlpha(0)
                 r.check:SetVertexColor(1, 1, 1)
@@ -196,58 +234,7 @@ local function RenderRows(rows)
     QS_TrackerApplyFontScale()
 end
 
--- -------------------------
--- Build rows for any step
-local function BuildRows(step, fallbackTitle, forceComplete)
-    local rows, c = {}, 0
-    local stype = string.upper(step and step.type or "")
-
-    if stype == "ACCEPT" or stype == "TURNIN" then
-        local npc = step and step.npc
-        local who = (type(npc) == "table" and npc.name) or (type(npc) == "string" and npc) or "the quest giver"
-        c=c+1; rows[c] = { icon=TEX_TALK, text=("Talk to "..who), bullet=false }
-        c=c+1; rows[c] = { icon=(stype=="TURNIN" and TEX_TURNIN or TEX_ACCEPT), text=(step and step.title) or "", bullet=false }
-
-    elseif stype == "TRAVEL" then
-        local note = (step and step.note) or "Travel to the marked location."
-        local cmeta = step and step.coords or {}
-        local where = ""
-        if cmeta and cmeta.x and cmeta.y then
-            local z = cmeta.map or ""
-            where = string.format("(%.1f, %.1f %s)", cmeta.x, cmeta.y, z)
-        end
-        c=c+1; rows[c] = { icon=TEX_RUN, text=note, bullet=false }
-        if where ~= "" then
-            c=c+1; rows[c] = { icon=nil, text=where, bullet=false }
-        end
-
-    elseif stype == "USE_ITEM" then
-        local nameTxt = step and (step.itemName or ("Item ID "..tostring(step.itemId or "?")))
-        local tar = (step and step.npc and step.npc.name) and (" with "..step.npc.name.." selected") or ""
-        local line = "Use: "..(nameTxt or "item")..tar
-        c=c+1; rows[c] = { icon=TEX_USE, text=line, bullet=false }
-
-    else
-        local note = (step and step.note) or (fallbackTitle or "")
-        c=c+1; rows[c] = { icon=nil, text=note, bullet=false }
-
-        -- use guide-defined objectives and overlay counts (with forceComplete)
-        local orows = QS_BuildObjectiveRows and QS_BuildObjectiveRows(step, forceComplete) or {}
-        local j = 1
-        while j <= table.getn(orows) do
-            local R = orows[j]
-            local kind = R.kind or "other"
-            local icon = (kind=="kill" and TEX_KILL) or (kind=="loot" and TEX_LOOT) or TEX_OTHER
-            c=c+1; rows[c] = { icon=icon, text=(R.text or ""), bullet=true, done=(R.done and true or false) }
-            j = j + 1
-        end
-    end
-
-    return rows
-end
-
--- -------------------------
--- Header
+-- ------------------------- Header -------------------------
 local function UpdateHeaderStep()
     local total = 0
     local d = QS_GuideData and QS_GuideData() or nil
@@ -260,8 +247,7 @@ local function UpdateHeaderStep()
     headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
 end
 
--- -------------------------
--- Create tracker
+-- ------------------------- Create tracker -------------------------
 local function CreateTracker()
     EnsureDB(); if tracker then return end
 
@@ -364,7 +350,7 @@ local function CreateTracker()
     QS_TrackerApplyFontScale()
 end
 
--- -------------------------
+-- ------------------------- Public API -------------------------
 function QuestShellUI.Update(title, typ, body)
     if not tracker then CreateTracker() end
     UpdateHeaderStep()
@@ -381,7 +367,6 @@ function QuestShellUI.Update(title, typ, body)
     if QS_UI_IsStepCompleted then chk:SetChecked(forceComplete) end
 end
 
--- Font scale API
 function QuestShellUI.SetFontScale(scale)
     if not scale then return end
     if scale < 0.6 then scale = 0.6 end

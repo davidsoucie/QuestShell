@@ -1,7 +1,7 @@
 -- =========================
 -- guide_alliance_1_20.lua
 -- Campaign guide with chapters: Teldrassil 1–12 → Darkshore 12–20
--- Turtle/Vanilla 1.12, QuestShell chapters-ready format
+-- Data only; consumed by core_guides / UIs. Keep titles exact for auto-matching!
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -91,7 +91,6 @@ QuestShellGuides["Alliance 1-20"] = {
 
         -- ---------------------
         -- Chapter 2: Darkshore 12–20 (sample)
-        -- Titles only; questIds optional. Add/adjust as you like.
         -- ---------------------
         {
             id       = "darkshore-12-20",

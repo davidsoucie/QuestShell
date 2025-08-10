@@ -1,6 +1,7 @@
 -- =========================
 -- QuestShell core_utils.lua
 -- Utils, DB, logging, quest-log helpers
+-- (Lua 5.0 / Turtle safe; no '#' and no 'self')
 -- =========================
 
 QuestShell = QuestShell or {}
@@ -121,14 +122,60 @@ function QS_IsQuestObjectivesCompleteByIndex(idx)
 end
 
 -- =====================================================================
--- Objective plumbing: Build stable rows from the guide, overlaying live
--- quest-log counts only when we can confidently match the quest.
--- Vanilla/Turtle Lua 5.0 safe (no '%', no '#').
+-- Objective plumbing
+--  * Fix: match labels against quest-log subjects by equality (not substring).
+--  * We normalize strings first (lowercase, strip counts/punctuation/keywords).
 -- =====================================================================
 
+-- Normalize helper (Lua 5.0 safe)
+local function QS__trim(s)
+    if not s then return "" end
+    s = string.gsub(s, "^%s+", "")
+    s = string.gsub(s, "%s+$", "")
+    return s
+end
+
+-- Extract the "subject" part from a quest-log objective line.
+-- Examples:
+--   "Young Thistle Boar slain: 1/4" -> "young thistle boar"
+--   "Crawler Legs: 0/4"             -> "crawler legs"
+local function QS__ObjectiveSubject(txt)
+    if not txt then return "" end
+    local s = string.lower(txt)
+
+    -- drop any "x/y" or "x of y"
+    s = string.gsub(s, "%d+%s*/%s*%d+", "")
+    s = string.gsub(s, "%d+%s+of%s+%d+", "")
+    -- cut off after a colon if present (common pattern "Thing: x/y")
+    local a, b = string.find(s, ":")
+    if a then s = string.sub(s, 1, a - 1) end
+    -- strip trailing keywords like "slain"
+    s = string.gsub(s, "%s+slain%s*$", "")
+    -- collapse whitespace
+    s = string.gsub(s, "%s+", " ")
+    return QS__trim(s)
+end
+
+-- Normalize a guide label to compare with quest-log subject
+local function QS__NormLabel(lbl)
+    if not lbl then return "" end
+    local s = string.lower(lbl)
+    s = string.gsub(s, "%s+slain%s*$", "")
+    s = string.gsub(s, "%s+", " ")
+    return QS__trim(s)
+end
+
+-- Optional questID helpers (use if server exposes them)
+local function QS__LogQuestID(logIndex)
+    if GetQuestLogQuestID then return GetQuestLogQuestID(logIndex) end
+    if C_QuestLog and C_QuestLog.GetQuestIDForLogIndex then
+        return C_QuestLog.GetQuestIDForLogIndex(logIndex)
+    end
+    return nil
+end
+
 -- Try to pick the most likely quest-log entry for this step, based on
--- exact quest title + how many objective labels match.
--- Try to pick the most-likely quest-log entry for this step
+-- exact quest title + how many objective subjects EQUAL the labels.
 local function QS__FindQuestLogIndexForStep(step)
     if not step or not step.title then return nil end
     local title = step.title
@@ -137,17 +184,21 @@ local function QS__FindQuestLogIndexForStep(step)
     while i <= entries do
         local t, _, _, isHeader = GetQuestLogTitle(i)
         if not isHeader and t == title then
-            local score, n = 0, (GetNumQuestLeaderBoards(i) or 0)
+            local score = 0
+            local n = GetNumQuestLeaderBoards(i) or 0
             if step.objectives and type(step.objectives) == "table" then
                 local j = 1
                 while j <= n do
                     local txt = GetQuestLogLeaderBoard(j, i)
+                    local subj = QS__ObjectiveSubject(txt)
+                    -- compare with each label (normalized equality)
                     local k = 1
                     while step.objectives[k] do
                         local o = step.objectives[k]
-                        local lab = o and o.label
-                        if lab and txt and string.find(string.lower(txt), string.lower(lab)) then
+                        local lab = QS__NormLabel(o and (o.label or o.text))
+                        if lab ~= "" and subj ~= "" and lab == subj then
                             score = score + 1
+                            break
                         end
                         k = k + 1
                     end
@@ -183,7 +234,8 @@ function QS_BuildObjectiveRows(step, forceComplete)
         local k = 1
         while step.objectives[k] do
             local O = step.objectives[k] or {}
-            local label  = O.label or ""
+            local labelRaw = O.label or O.text or ""
+            local label = QS__NormLabel(labelRaw)
             local target = O.target or 0
             local cur, done = 0, false
 
@@ -192,7 +244,8 @@ function QS_BuildObjectiveRows(step, forceComplete)
                 local j = 1
                 while j <= n do
                     local txt, _, qdone = GetQuestLogLeaderBoard(j, idx)
-                    if txt and label ~= "" and string.find(string.lower(txt), string.lower(label)) then
+                    local subj = QS__ObjectiveSubject(txt)
+                    if label ~= "" and subj ~= "" and label == subj then
                         local c, t = QS__ParseCounts(txt)
                         if c then cur = c end
                         if t then target = t end
@@ -208,10 +261,10 @@ function QS_BuildObjectiveRows(step, forceComplete)
             end
 
             local out
-            if label ~= "" and target and target > 0 then
-                out = label..": "..tostring(cur or 0).."/"..tostring(target)
+            if labelRaw ~= "" and target and target > 0 then
+                out = labelRaw..": "..tostring(cur or 0).."/"..tostring(target)
             else
-                out = (label ~= "" and label) or (O.text or "")
+                out = (labelRaw ~= "" and labelRaw) or ""
             end
 
             rows[table.getn(rows)+1] = {
@@ -220,7 +273,7 @@ function QS_BuildObjectiveRows(step, forceComplete)
                 kind   = O.kind or "other",
                 cur    = cur,
                 target = target,
-                label  = label
+                label  = labelRaw
             }
             k = k + 1
         end
@@ -237,7 +290,6 @@ function QS_BuildObjectiveRows(step, forceComplete)
             if forceComplete then
                 local c, t = QS__ParseCounts(txt)
                 if t then
-                    -- rewrite "x/y" → "t/t"
                     out = string.gsub(txt, "(%d+)%s*/%s*(%d+)", tostring(t).."/"..t, 1)
                     done = true
                 else

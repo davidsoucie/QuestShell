@@ -1,7 +1,7 @@
 -- =========================
--- guide_alliance_1_20.lua
--- Campaign guide with chapters: Teldrassil 1–12 → Darkshore 12–20
--- Turtle/Vanilla 1.12, QuestShell chapters-ready format
+-- guide_test.lua
+-- Small “Test” guide to exercise all step types including TRAVEL and USE_ITEM.
+-- Keep titles/levels consistent with in-game data for best auto-matching.
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -12,10 +12,6 @@ QuestShellGuides["Test"] = {
     maxLevel = 10,
 
     chapters = {
-
-        -- ---------------------
-        -- Chapter 1: Test
-        -- ---------------------
         {
             id       = "Test",
             title    = "Test",
@@ -40,7 +36,7 @@ QuestShellGuides["Test"] = {
                   type="TRAVEL",
                   title="Run to the Well",
                   coords={ x=60.2, y=42.6, map="Teldrassil" },
-                  radius=0.35, -- optional; in the same units the arrow uses
+                  radius=0.35,
                   note="Head to the Moonwell north of the starting area."
                 },
 
@@ -94,10 +90,10 @@ QuestShellGuides["Test"] = {
                 -- USE_ITEM example: Hearthstone (no target required)
                 {
                   type="USE_ITEM",
-                  title="Drink some water",
-                  itemId=159,                 -- Hearthstone
-                  itemName="Refreshign Spring Water",      -- UI label
-                  note="Drink some water."
+                  title="Hearth back to Shadowglen",
+                  itemId=6948,                 -- Hearthstone
+                  itemName="Hearthstone",      -- UI label
+                  note="Use your Hearthstone."
                 },
 
                 -- USE_ITEM with target requirement example (imaginary item)
