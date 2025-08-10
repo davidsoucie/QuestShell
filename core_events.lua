@@ -17,6 +17,10 @@ local awaitingAcceptTitle = nil
 local travelUpdateAccum = 0
 local itemTrack = { itemId=nil, prevCount=nil, lastChangeTime=0 }
 
+-- NEW: suppression + step-change tracker
+local _qsArrivedForStepIdx = nil     -- if set to current step index, don't re-prime arrow for COMPLETE
+local _qsLastStepIdx = nil           -- remember last seen step index to detect any step change
+
 local function Now() return GetTime and GetTime() or 0 end
 
 local function Safe(t) return t or "" end
@@ -223,8 +227,10 @@ function QS_AdvanceStep()
     end
     st.currentStep = nextIdx
 
-    -- clear travel/item trackers on advance
+    -- clear trackers on advance; reset COMPLETE suppression for new step
     itemTrack.itemId, itemTrack.prevCount, itemTrack.lastChangeTime = nil, nil, 0
+    _qsArrivedForStepIdx = nil
+    _qsLastStepIdx = nil
     if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
 
     -- within current chapter?
@@ -250,22 +256,46 @@ end
 
 -- ------------------------------------------------------------
 -- Global UI aggregator (called by other modules and on boot)
--- Also primes TRAVEL arrow + item tracking when applicable.
+-- Also primes arrows + item tracking when applicable.
 -- ------------------------------------------------------------
 local function QS__MaybePrimeTravelAndArrow()
-    local step = QS_CurrentStep and QS_CurrentStep() or nil
+    local steps = QS_GuideData and QS_GuideData() or {}
+    local st    = QS_GuideState and QS_GuideState() or {}
+    local idx   = st and st.currentStep or 1
+    local step  = steps[idx]
     if not step then return end
 
-    -- TRAVEL: set arrow target if enabled
-    if string.upper(step.type or "") == "TRAVEL" then
-        local c = step.coords or {}
-        if QuestShellUI and QuestShellUI.ArrowSet and c.x and c.y then
-            QuestShellUI.ArrowSet(c.map or "", c.x, c.y, step.title or "Travel")
+    -- Detect ANY step change (forward/back/jump) → reset suppression
+    if _qsLastStepIdx ~= idx then
+        _qsArrivedForStepIdx = nil
+        _qsLastStepIdx = idx
+    end
+
+    local typ  = string.upper(step.type or "")
+    local hasC = step.coords and step.coords.x and step.coords.y
+
+    -- Show arrow for:
+    --  - TRAVEL (if coords)
+    --  - COMPLETE (if coords) ONLY until first arrival (suppressed afterwards)
+    --  - ACCEPT (if coords)
+    --  - TURNIN (if coords)
+    local wantArrow =
+        (typ == "TRAVEL"   and hasC) or
+        (typ == "COMPLETE" and hasC and _qsArrivedForStepIdx ~= idx) or
+        (typ == "ACCEPT"   and hasC) or
+        (typ == "TURNIN"   and hasC)
+
+    if wantArrow and QuestShellUI and QuestShellUI.ArrowSet then
+        local c = step.coords
+        QuestShellUI.ArrowSet(c.map or "", c.x, c.y, step.title or "Waypoint")
+    else
+        if QuestShellUI and QuestShellUI.ArrowClear then
+            QuestShellUI.ArrowClear()
         end
     end
 
     -- USE_ITEM: prepare counters for detection
-    if string.upper(step.type or "") == "USE_ITEM" then
+    if typ == "USE_ITEM" then
         local id = step.itemId
         if id and QS_CountItemInBags then
             itemTrack.itemId = id
@@ -318,7 +348,7 @@ ev:RegisterEvent("BAG_UPDATE_COOLDOWN")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
 
 -- ------------------------------------------------------------
--- Helpers: TRAVEL + USE_ITEM completions
+-- Helpers: TRAVEL + USE_ITEM + arrival check
 -- ------------------------------------------------------------
 local function QS__CompleteCurrentStep()
     if QS_AdvanceStep then QS_AdvanceStep() end
@@ -646,7 +676,7 @@ ev:SetScript("OnEvent", function()
 end)
 
 -- ------------------------------------------------------------
--- TRAVEL OnUpdate poller (lightweight; 0.2s)
+-- TRAVEL/COMPLETE OnUpdate poller (lightweight; 0.2s)
 -- ------------------------------------------------------------
 local travelPoll = CreateFrame("Frame", "QuestShellTravelPoll")
 travelPoll:SetScript("OnUpdate", function()
@@ -664,6 +694,19 @@ travelPoll:SetScript("OnUpdate", function()
             QS__CompleteCurrentStep()
             return
         end
+
+    elseif stype == "COMPLETE" then
+        -- first arrival at the grind area → suppress arrow for this step
+        if step.coords and step.coords.x and step.coords.y and QS__WithinTravelRadius(step) then
+            local st = QS_GuideState and QS_GuideState() or nil
+            if st then _qsArrivedForStepIdx = st.currentStep end
+            if QuestShellUI and QuestShellUI.ArrowClear then
+                if QS_D then QS_D("COMPLETE arrived; suppressing arrow for this step.") end
+                QuestShellUI.ArrowClear()
+            end
+            return
+        end
+
     elseif stype == "USE_ITEM" then
         -- secondary check in case cooldown event missed
         if QS__UseItemSatisfied(step) then
