@@ -1,122 +1,93 @@
 -- =========================
--- QuestShell UI — Arrow
--- Minimal orientation/approx distance arrow widget (off by default)
--- Compatibility: Vanilla/Turtle (Lua 5.0)
+-- ui_arrow.lua — TomTom Direct (fixed)
+-- Uses TomTom Crazy Arrow & waypoints; no bridge, no custom arrow.
+-- Lua 5.0 / Vanilla/Turtle safe
 -- =========================
--- Behavior:
---   - Only shows if QuestShellDB.ui.arrowEnabled == true (saved variable gate).
---   - If a TRAVEL step is active and the arrow is enabled, core_events primes it
---     via QuestShellUI.ArrowSet(map, x, y, title).
--- Public:
---   QuestShellUI_AttachArrowToTracker(trackerFrame) -- optional positioning
---   QuestShellUI.ArrowSet(map, x, y, title)
---   QuestShellUI.ArrowClear()
--- =========================
-
 QuestShellUI = QuestShellUI or {}
 
-local QSArrowTarget = nil   -- { map="", x=58.7, y=44.4, title="..." }
-local arrowFrame, arrowDirFS, arrowDistFS
-local arrowUpdateAccum = 0
+local activeUID = nil
 
-local function ArrowEnabled()
-    return (QuestShellDB and QuestShellDB.ui and QuestShellDB.ui.arrowEnabled) == true
+local function warn(msg)
+    if DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[QuestShell]|r "..tostring(msg))
+    end
 end
 
-local function EnsureFrame(parent)
-    if arrowFrame then return end
-    parent = parent or UIParent
-
-    arrowFrame = CreateFrame("Frame", "QuestShellArrow", parent)
-    arrowFrame:SetWidth(140); arrowFrame:SetHeight(18)
-    arrowFrame:SetPoint("CENTER", UIParent, "CENTER", 0, 200) -- detached; not on tracker
-    arrowFrame:Hide()
-
-    arrowDirFS  = arrowFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    arrowDirFS:SetPoint("LEFT", arrowFrame, "LEFT", 0, 0)
-    arrowDirFS:SetText("")
-
-    arrowDistFS = arrowFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    arrowDistFS:SetPoint("LEFT", arrowDirFS, "RIGHT", 6, 0)
-    arrowDistFS:SetText("")
-
-    arrowFrame:SetScript("OnUpdate", function()
-        arrowUpdateAccum = arrowUpdateAccum + (arg1 or 0)
-        if arrowUpdateAccum < 0.2 then return end
-        arrowUpdateAccum = 0
-
-        if not ArrowEnabled() or not QSArrowTarget then
-            arrowFrame:Hide()
-            return
-        end
-
-        local playerZone = GetRealZoneText() or GetZoneText() or ""
-        if QSArrowTarget.map ~= "" and string.lower(QSArrowTarget.map) ~= string.lower(playerZone) then
-            arrowDirFS:SetText("|cffff5555"..QSArrowTarget.map.."|r")
-            arrowDistFS:SetText("other zone")
-            return
-        end
-
-        SetMapToCurrentZone()
-        local px, py = GetPlayerMapPosition("player")
-        if not px or not py or (px == 0 and py == 0) then
-            arrowDirFS:SetText("—")
-            arrowDistFS:SetText("no pos")
-            return
-        end
-
-        local tx = (QSArrowTarget.x or 0) / 100.0
-        local ty = (QSArrowTarget.y or 0) / 100.0
-        local dx = tx - px
-        local dy = ty - py
-
-        local angle = math.atan2(dy, dx)
-        local facing = (GetPlayerFacing and GetPlayerFacing()) or 0
-        local rel = angle - facing
-        local pi = math.pi
-        while rel < -pi do rel = rel + 2*pi end
-        while rel >  pi do rel = rel - 2*pi end
-
-        -- Lua 5.0 safe modulo
-        local sector = math.floor((rel + pi/8) / (pi/4))
-        local m = math.mod(sector, 8); if m < 0 then m = m + 8 end
-        local idx = m + 1
-        local dirs = {"N","NE","E","SE","S","SW","W","NW"}
-        arrowDirFS:SetText(dirs[idx])
-
-        local dist = math.sqrt(dx*dx + dy*dy) * 100.0
-        arrowDistFS:SetText(string.format("~%.1f", dist))
-        arrowFrame:Show()
-    end)
+local function TomTomOK()
+    return TomTom and Astrolabe and type(TomTom.AddMFWaypoint) == "function"
 end
 
--- Backward-compat attach (respected but still hidden unless enabled)
-function QuestShellUI_AttachArrowToTracker(trackerFrame)
-    EnsureFrame(trackerFrame or UIParent)
-    arrowFrame:ClearAllPoints()
-    arrowFrame:SetPoint("BOTTOMLEFT", trackerFrame or UIParent, "BOTTOMLEFT", 8, 8)
+local function CleanZoneName(s)
+    if TomTom and TomTom.CleanZoneName then
+        return TomTom:CleanZoneName(s or "")
+    end
+    s = string.lower(s or "")
+    s = string.gsub(s, "[^%a%d]", "")
+    return s
 end
 
--- Public API (no-op when disabled)
-function QuestShellUI.ArrowSet(map, x, y, title)
-    if not ArrowEnabled() then return end
-    EnsureFrame()
-    QSArrowTarget = { map = map or "", x = x, y = y, title = title or "" }
-    if arrowFrame then arrowFrame:Show() end
+-- Resolve (continent, zone) indices for a map name, else fall back to player's current
+local function ResolveContZone(mapName)
+    -- Prefer explicit map name via TomTom’s resolver
+    if TomTom and TomTom.GetZoneInfo and mapName and mapName ~= "" then
+        local cont, zone = TomTom:GetZoneInfo(CleanZoneName(mapName))
+        if cont and zone then return cont, zone end
+    end
+    -- Fallback: Astrolabe current player position
+    if Astrolabe and Astrolabe.GetCurrentPlayerPosition then
+        local c, z = Astrolabe:GetCurrentPlayerPosition()
+        if c and z then return c, z end
+    end
+    return nil, nil
+end
+
+-- -------- Public API --------
+function QuestShellUI.ArrowSet(mapName, x, y, title)
+    if not TomTomOK() then
+        warn("TomTom/Astrolabe not found; arrow disabled.")
+        return
+    end
+
+    -- Clear previous
+    if activeUID and TomTom.RemoveWaypoint then
+        TomTom:RemoveWaypoint(activeUID, true)
+        activeUID = nil
+    end
+    if TomTom.ClearCrazyArrow then TomTom:ClearCrazyArrow() end
+
+    local cont, zone = ResolveContZone(mapName)
+    if not cont or not zone then
+        warn("Could not resolve map '"..tostring(mapName or "").."'; using current zone failed.")
+        return
+    end
+
+    local fx = tonumber(x) and (x / 100.0) or nil
+    local fy = tonumber(y) and (y / 100.0) or nil
+    if not fx or not fy then
+        warn("Invalid coordinates for TomTom.")
+        return
+    end
+    if fx < 0 then fx = 0 elseif fx > 1 then fx = 1 end
+    if fy < 0 then fy = 0 elseif fy > 1 then fy = 1 end
+
+    local uid = TomTom:AddMFWaypoint(cont, zone, fx, fy, {
+        title = title or "QuestShell waypoint",
+        crazy = true,
+        persistent = false,
+        silent = true,
+    })
+    if uid then
+        activeUID = uid
+        if TomTom.SetArrowWaypoint then TomTom:SetArrowWaypoint(uid) end
+    else
+        warn("TomTom:AddMFWaypoint failed.")
+    end
 end
 
 function QuestShellUI.ArrowClear()
-    QSArrowTarget = nil
-    if arrowFrame then arrowFrame:Hide() end
-end
-
--- Ensure it's hidden on load unless explicitly enabled
-local boot = CreateFrame("Frame")
-boot:RegisterEvent("VARIABLES_LOADED")
-boot:SetScript("OnEvent", function()
-    QuestShellDB = QuestShellDB or {}; QuestShellDB.ui = QuestShellDB.ui or {}
-    if QuestShellDB.ui.arrowEnabled ~= true then
-        QuestShellDB.ui.arrowEnabled = false
-        QuestShellUI.ArrowClear()
+    if TomTom and TomTom.ClearCrazyArrow then TomTom:ClearCrazyArrow() end
+    if activeUID and TomTom and TomTom.RemoveWaypoint then
+        TomTom:RemoveWaypoint(activeUID, true)
+        activeUID = nil
     end
-end)
+end
