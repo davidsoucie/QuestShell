@@ -9,6 +9,7 @@ core_utils.lua
 core_guides.lua
 core_gossip.lua
 core_events.lua
+core_commands.lua
 
 ui_shared.lua
 ui_tracker.lua
