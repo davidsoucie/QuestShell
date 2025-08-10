@@ -696,15 +696,18 @@ travelPoll:SetScript("OnUpdate", function()
         end
 
     elseif stype == "COMPLETE" then
-        -- first arrival at the grind area → suppress arrow for this step
-        if step.coords and step.coords.x and step.coords.y and QS__WithinTravelRadius(step) then
+        -- Only trigger once, the first time we arrive for this step
+        if step.coords and step.coords.x and step.coords.y then
             local st = QS_GuideState and QS_GuideState() or nil
-            if st then _qsArrivedForStepIdx = st.currentStep end
-            if QuestShellUI and QuestShellUI.ArrowClear then
+            local cur = st and st.currentStep
+            if cur and _qsArrivedForStepIdx ~= cur and QS__WithinTravelRadius(step) then
+                _qsArrivedForStepIdx = cur   -- remember arrival for THIS step
+                if QuestShellUI and QuestShellUI.ArrowClear then
+                    QuestShellUI.ArrowClear()
+                end
                 if QS_D then QS_D("COMPLETE arrived; suppressing arrow for this step.") end
-                QuestShellUI.ArrowClear()
+                return
             end
-            return
         end
 
     elseif stype == "USE_ITEM" then
