@@ -135,3 +135,13 @@ function QS_BuildVisualRows(step, fallbackTitle, forceComplete)
     end
     return _build_completeish(step, fallbackTitle, forceComplete)
 end
+
+
+-- SET_HEARTH
+QS_RegisterStepType("SET_HEARTH", {
+    build = function(step, fallbackTitle, forceComplete)
+        local who = (step and step.npc and step.npc.name) or "the innkeeper"
+        local line = "Set your hearthstone at "..who
+        return { { bullet=false, icon=QS_StepIcon("hearth"), text=line } }
+    end
+})

@@ -11,20 +11,52 @@
 -- + From utils: QS_CountItemInBags, QS_FindItemInBags, QS_IsQuestObjectivesCompleteByIndex
 
 -- ------------------------------------------------------------
+
+-- ------------------------------------------------------------
 -- Local helpers / state
 -- ------------------------------------------------------------
+-- Item usage tracker (for USE_ITEM behavior); survives across events and is reset on advance
+local itemTrack = { itemId = nil, prevCount = nil, lastChangeTime = 0 }
+
 local awaitingAcceptTitle = nil
 local travelUpdateAccum = 0
-local itemTrack = { itemId=nil, prevCount=nil, lastChangeTime=0 }
 
--- NEW: suppression + step-change tracker
-local _qsArrivedForStepIdx = nil     -- if set to current step index, don't re-prime arrow for COMPLETE
-local _qsLastStepIdx = nil           -- remember last seen step index to detect any step change
+-- Behavior hook state
+local _qsArrivedForStepIdx = nil     -- remember which step we've already "arrived" at (for arrow suppression)
+local _qsLastStepIdx = nil           -- last seen step index
+local _qsStepState = {}              -- ephemeral per-current-step state (cleared when step changes)
 
 local function Now() return GetTime and GetTime() or 0 end
-
 local function Safe(t) return t or "" end
 local function tlen(t) local n=0; if type(t)=="table" then for _ in pairs(t) do n=n+1 end end; return n end
+
+-- Helpers passed to behaviors
+local function _WithinTravelRadius(step)
+    if not step or not step.coords or not step.coords.x or not step.coords.y then return false end
+    if not UnitPosition then return false end
+    local px, py = UnitPosition("player")
+    if not px or not py then return false end
+    local tx = (step.coords.x or 0) / 100.0
+    local ty = (step.coords.y or 0) / 100.0
+    local dx, dy = tx - px, ty - py
+    local dist = math.sqrt(dx*dx + dy*dy) * 100.0
+    local r = step.radius or 0.3
+    if r < 0.05 then r = 0.05 end
+    return dist <= r
+end
+
+local function _BehaviorFor(step)
+    if not step or not step.type or not QS_BehaviorFor then return nil end
+    return QS_BehaviorFor(step.type)
+end
+
+-- Internal: get per-step state (resets on step change)
+local function _StateFor(idx)
+    if not idx then return nil end
+    _qsStepState[idx] = _qsStepState[idx] or {}
+    return _qsStepState[idx]
+end
+
 
 -- --- NPC gating: only act when we're talking to the intended NPC ----------
 local function QS_GetCurrentNpcName()
@@ -259,52 +291,51 @@ end
 -- Also primes arrows + item tracking when applicable.
 -- ------------------------------------------------------------
 local function QS__MaybePrimeTravelAndArrow()
+    
     local steps = QS_GuideData and QS_GuideData() or {}
     local st    = QS_GuideState and QS_GuideState() or {}
     local idx   = st and st.currentStep or 1
     local step  = steps[idx]
     if not step then return end
 
-    -- Detect ANY step change (forward/back/jump) → reset suppression
+    -- Step change?
     if _qsLastStepIdx ~= idx then
         _qsArrivedForStepIdx = nil
         _qsLastStepIdx = idx
+        _qsStepState = {} -- clear per-step state
+        local beh = _BehaviorFor(step)
+        if beh and beh.onEnter then
+            local state = _StateFor(idx)
+            pcall(beh.onEnter, step, state)
+        end
     end
 
-    local typ  = string.upper(step.type or "")
-    local hasC = step.coords and step.coords.x and step.coords.y
+    -- Ask behavior for waypoint
+    local beh = _BehaviorFor(step)
+    local wantArrow, c = false, nil
+    local suppressOnArrive = false
+    if beh and beh.waypoint then
+        local wp = beh.waypoint(step) or nil
+        if wp and wp.x and wp.y then
+            c = wp
+            suppressOnArrive = (wp.suppressAfterArrival and true or false)
+            wantArrow = true
+        end
+    elseif step.coords and step.coords.x and step.coords.y then
+        c = step.coords; wantArrow = true
+    end
 
-    -- Show arrow for:
-    --  - TRAVEL (if coords)
-    --  - COMPLETE (if coords) ONLY until first arrival (suppressed afterwards)
-    --  - ACCEPT (if coords)
-    --  - TURNIN (if coords)
-    local wantArrow =
-        (typ == "TRAVEL"   and hasC) or
-        (typ == "COMPLETE" and hasC and _qsArrivedForStepIdx ~= idx) or
-        (typ == "ACCEPT"   and hasC) or
-        (typ == "TURNIN"   and hasC)
+    -- Suppress if requested and we've already arrived on this step
+    if wantArrow and suppressOnArrive and _qsArrivedForStepIdx == idx then
+        wantArrow = false
+    end
 
-    if wantArrow and QuestShellUI and QuestShellUI.ArrowSet then
-        local c = step.coords
+    if wantArrow and QuestShellUI and QuestShellUI.ArrowSet and (QuestShellDB and QuestShellDB.ui and QuestShellDB.ui.arrowEnabled ~= false) then
         QuestShellUI.ArrowSet(c.map or "", c.x, c.y, step.title or "Waypoint")
     else
-        if QuestShellUI and QuestShellUI.ArrowClear then
-            QuestShellUI.ArrowClear()
-        end
+        if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
     end
 
-    -- USE_ITEM: prepare counters for detection
-    if typ == "USE_ITEM" then
-        local id = step.itemId
-        if id and QS_CountItemInBags then
-            itemTrack.itemId = id
-            itemTrack.prevCount = QS_CountItemInBags(id)
-            itemTrack.lastChangeTime = 0
-        end
-    else
-        itemTrack.itemId, itemTrack.prevCount, itemTrack.lastChangeTime = nil, nil, 0
-    end
 end
 
 function QuestShellUI_UpdateAll()
@@ -346,6 +377,7 @@ ev:RegisterEvent("VARIABLES_LOADED")
 ev:RegisterEvent("BAG_UPDATE")
 ev:RegisterEvent("BAG_UPDATE_COOLDOWN")
 ev:RegisterEvent("PLAYER_ENTERING_WORLD")
+ev:RegisterEvent("CONFIRM_BINDER")
 
 -- ------------------------------------------------------------
 -- Helpers: TRAVEL + USE_ITEM + arrival check
@@ -417,6 +449,32 @@ end
 -- ------------------------------------------------------------
 ev:SetScript("OnEvent", function()
     local event = event -- vanilla arg
+    -- Behavior dispatch (early)
+    local step = QS_CurrentStep and QS_CurrentStep() or nil
+    if step then
+        local st = QS_GuideState and QS_GuideState() or {}
+        local idx = st and st.currentStep or 1
+        local beh = _BehaviorFor(step)
+        if beh and beh.onEvent then
+            local state = _StateFor(idx)
+            local ok, ret = pcall(beh.onEvent, step, event, { arg1=arg1, arg2=arg2, arg3=arg3 }, state)
+            if ok and ret then
+                if ret.advance then
+                    if QS_D then QS_D("Behavior requested advance for "..(step.type or "")) end
+                    if QS_UI_SetStepCompleted and st and st.currentStep then
+                        QS_UI_SetStepCompleted(st.currentStep, true)
+                    end
+                    if QS_AdvanceStep then QS_AdvanceStep() end
+                    return
+                end
+                if ret.reprime then
+                    if QS__MaybePrimeTravelAndArrow then QS__MaybePrimeTravelAndArrow() end
+                end
+                if ret.handled then return end
+            end
+        end
+    end
+
     if event == "VARIABLES_LOADED" or event == "PLAYER_ENTERING_WORLD" then
         if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
         return
@@ -678,6 +736,10 @@ end)
 -- ------------------------------------------------------------
 -- TRAVEL/COMPLETE OnUpdate poller (lightweight; 0.2s)
 -- ------------------------------------------------------------
+
+-- ------------------------------------------------------------
+-- OnUpdate poller (0.2s): delegate to step behavior
+-- ------------------------------------------------------------
 local travelPoll = CreateFrame("Frame", "QuestShellTravelPoll")
 travelPoll:SetScript("OnUpdate", function()
     travelUpdateAccum = travelUpdateAccum + (arg1 or 0)
@@ -686,36 +748,27 @@ travelPoll:SetScript("OnUpdate", function()
 
     local step = QS_CurrentStep and QS_CurrentStep() or nil
     if not step then return end
+    local st = QS_GuideState and QS_GuideState() or {}
+    local idx = st and st.currentStep or 1
+    local beh = _BehaviorFor(step)
+    if not beh or not beh.onUpdate then return end
 
-    local stype = string.upper(step.type or "")
-    if stype == "TRAVEL" then
-        if QS__WithinTravelRadius(step) then
-            if QS_D then QS_D("TRAVEL arrived within radius; advancing step.") end
-            QS__CompleteCurrentStep()
-            return
+    local state = _StateFor(idx)
+    local ok, ret = pcall(beh.onUpdate, step, { dt=0.2, helpers={ WithinRadius=_WithinTravelRadius } }, state)
+    if not ok then return end
+    if ret and ret.arrived then
+        _qsArrivedForStepIdx = idx
+        if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
+        return
+    end
+    if ret and ret.advance then
+        if QS_D then QS_D("Behavior requested advance for "..(step.type or "")) end
+        -- mark complete and advance
+        if QS_UI_SetStepCompleted and QS_GuideState then
+            local st2 = QS_GuideState()
+            if st2 and st2.currentStep then QS_UI_SetStepCompleted(st2.currentStep, true) end
         end
-
-    elseif stype == "COMPLETE" then
-        -- Only trigger once, the first time we arrive for this step
-        if step.coords and step.coords.x and step.coords.y then
-            local st = QS_GuideState and QS_GuideState() or nil
-            local cur = st and st.currentStep
-            if cur and _qsArrivedForStepIdx ~= cur and QS__WithinTravelRadius(step) then
-                _qsArrivedForStepIdx = cur   -- remember arrival for THIS step
-                if QuestShellUI and QuestShellUI.ArrowClear then
-                    QuestShellUI.ArrowClear()
-                end
-                if QS_D then QS_D("COMPLETE arrived; suppressing arrow for this step.") end
-                return
-            end
-        end
-
-    elseif stype == "USE_ITEM" then
-        -- secondary check in case cooldown event missed
-        if QS__UseItemSatisfied(step) then
-            if QS_D then QS_D("USE_ITEM satisfied (poll); advancing step.") end
-            QS__CompleteCurrentStep()
-            return
-        end
+        if QS_AdvanceStep then QS_AdvanceStep() end
+        return
     end
 end)
