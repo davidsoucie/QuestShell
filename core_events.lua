@@ -78,12 +78,7 @@ local function QS_ShouldAutoHandleNpcForStep(step)
 end
 -- --------------------------------------------------------------------------
 
--- Optional questID helpers (use if server exposes them)
 local function QS__LogQuestID(logIndex)
-    if GetQuestLogQuestID then return GetQuestLogQuestID(logIndex) end
-    if C_QuestLog and C_QuestLog.GetQuestIDForLogIndex then
-        return C_QuestLog.GetQuestIDForLogIndex(logIndex)
-    end
     return nil
 end
 
@@ -148,16 +143,19 @@ local function QS__BestAcceptStepForLogIndex(logIndex)
     if not title then return nil end
 
     local steps = QS_GuideData() or {}
-    local qid   = (QS__LogQuestID and QS__LogQuestID(logIndex)) or nil
+    local st    = (QS_GuideState and QS_GuideState()) or {}
+    local cur   = st.currentStep or 1
 
+    -- collect eligible ACCEPT steps with same title, not completed
     local matches = {}
     local i = 1
     while steps[i] do
         local s = steps[i]
-        local ok = s and s.type == "ACCEPT" and s.title == title
-        if ok and (not QS_UI_IsStepCompleted or not QS_UI_IsStepCompleted(i)) then
-            if (not QS_StepIsEligible) or QS_StepIsEligible(s) then
-                matches[table.getn(matches)+1] = { idx=i, lvl=s.level, qid=s.questId }
+        if s and s.type == "ACCEPT" and s.title == title then
+            local notDone   = (not QS_UI_IsStepCompleted) or (not QS_UI_IsStepCompleted(i))
+            local eligible  = (not QS_StepIsEligible) or QS_StepIsEligible(s)
+            if notDone and eligible then
+                matches[table.getn(matches)+1] = { idx=i, lvl=s.level }
             end
         end
         i = i + 1
@@ -167,14 +165,7 @@ local function QS__BestAcceptStepForLogIndex(logIndex)
     if count == 0 then return nil end
     if count == 1 then return matches[1].idx end
 
-    if qid then
-        i = 1
-        while matches[i] do
-            if matches[i].qid and matches[i].qid == qid then return matches[i].idx end
-            i = i + 1
-        end
-    end
-
+    -- prefer exact LEVEL match from the quest log
     if qLevel then
         i = 1
         while matches[i] do
@@ -183,16 +174,14 @@ local function QS__BestAcceptStepForLogIndex(logIndex)
         end
     end
 
-    local st = QS_GuideState and QS_GuideState() or nil
-    local cur = st and st.currentStep or nil
-    if cur then
-        i = 1
-        while matches[i] do
-            if matches[i].idx == cur then return cur end
-            i = i + 1
-        end
+    -- tie-break: prefer the current step if among matches
+    i = 1
+    while matches[i] do
+        if matches[i].idx == cur then return cur end
+        i = i + 1
     end
 
+    -- fallback: first eligible match by title
     return matches[1].idx
 end
 
@@ -203,48 +192,19 @@ local function QS__BestLogIndexForAcceptStep(stepIndex)
 
     local wantTitle = s.title
     local wantLevel = s.level
-    local wantID    = s.questId
 
     local n = GetNumQuestLogEntries() or 0
-    local cands = {}
+    local firstIdx = nil
     local i = 1
     while i <= n do
         local t, qLevel, _, _, isHeader = GetQuestLogTitle(i)
         if not isHeader and t == wantTitle then
-            cands[table.getn(cands)+1] = {
-                idx = i,
-                lvl = qLevel,
-                qid = (QS__LogQuestID and QS__LogQuestID(i)) or nil
-            }
+            if not firstIdx then firstIdx = i end
+            if wantLevel and qLevel and wantLevel == qLevel then return i end
         end
         i = i + 1
     end
-
-    local count = table.getn(cands)
-    if count == 0 then return nil end
-
-    -- If the step specifies a questId, require that exact id.
-    if wantID then
-        i = 1
-        while cands[i] do
-            if cands[i].qid and cands[i].qid == wantID then return cands[i].idx end
-            i = i + 1
-        end
-        return nil
-    end
-
-    -- If the step specifies a level, require an exact level match.
-    if wantLevel then
-        i = 1
-        while cands[i] do
-            if cands[i].lvl and cands[i].lvl == wantLevel then return cands[i].idx end
-            i = i + 1
-        end
-        return nil
-    end
-
-    -- No disambiguators provided → first candidate by title.
-    return cands[1].idx
+    return firstIdx
 end
 
 local function QS__SelectAvailableIndexForAccept(step)
@@ -509,6 +469,48 @@ local function QS__UseItemSatisfied(step)
 
     return false
 end
+
+-- NEW: strict passive rescan (eligible-only)
+function QS_PassiveResyncAccepts()
+    local steps = QS_GuideData and QS_GuideData() or {}
+    local i = 1
+    while steps[i] do
+        local s = steps[i]
+        if s and s.type == "ACCEPT" and s.title then
+            local notDone = (not QS_UI_IsStepCompleted) or (not QS_UI_IsStepCompleted(i))
+            local eligible = (not QS_StepIsEligible) or QS_StepIsEligible(s)
+            if notDone and eligible then
+                local best = QS__BestLogIndexForAcceptStep and QS__BestLogIndexForAcceptStep(i) or nil
+                if best then
+                    if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(i, true) end
+                end
+            end
+        end
+        i = i + 1
+    end
+end
+
+-- NEW: one-shot resync after VARIABLES_LOADED / PLAYER_ENTERING_WORLD
+local QS_ResyncFrame = CreateFrame("Frame", "QuestShellResync")
+local _qsResyncPending, _qsResyncAccum = false, 0
+
+QS_ResyncFrame:RegisterEvent("VARIABLES_LOADED")
+QS_ResyncFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+
+QS_ResyncFrame:SetScript("OnEvent", function()
+    -- defer a bit so the quest log is fully populated
+    _qsResyncPending, _qsResyncAccum = true, 0
+end)
+
+QS_ResyncFrame:SetScript("OnUpdate", function()
+    if not _qsResyncPending then return end
+    _qsResyncAccum = _qsResyncAccum + (arg1 or 0)
+    if _qsResyncAccum < 0.8 then return end  -- ~800ms after load
+    _qsResyncPending = false
+
+    if QS_PassiveResyncAccepts then QS_PassiveResyncAccepts() end
+    if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
+end)
 
 -- ------------------------------------------------------------
 -- Handlers

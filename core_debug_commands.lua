@@ -17,3 +17,11 @@ SlashCmdList["QSDEBUG"] = function(msg)
         if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffcc66ff[QuestShell:DBG]|r "..state.."  (use /qsd on|off)") end
     end
 end
+
+-- NEW: /qsresync to manually re-mark accepted quests
+SLASH_QSRESYNC1 = "/qsresync"
+SlashCmdList.QSRESYNC = function()
+    if QS_PassiveResyncAccepts then QS_PassiveResyncAccepts() end
+    if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
+    QS_Print("QuestShell: resynced ACCEPT steps.")
+end
