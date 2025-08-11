@@ -14,77 +14,6 @@ QuestShellGuides["Test"] = {
     chapters = 
     {    
         {
-            id       = "Test-New",
-            title    = "Test-New",
-            zone     = "Test",
-            minLevel = 1,
-            maxLevel = 6,
-
-            steps = {
-                              -- The Woodland Protector (part 1)
-
-
-                { 
-                  type="ACCEPT", 
-                  title="Test Quest 1", 
-                  questId=123,                
-                  coords={ x=58.7, y=44.4, map="Teldrassil" },                
-                  npc = { name="Melithar Staghelm" },
-                  note="From Melithar Staghelm, Shadowglen."
-                },
-
-                { 
-                  type="ACCEPT", 
-                  title="Test Quest 2", 
-                  questId=124,
-                  coords={ x=58.7, y=44.4, map="Teldrassil" },                
-                  npc = { name="Melithar Staghelm" },
-                  note="From Melithar Staghelm, Shadowglen."
-                },
-
-                -- Travel example: arrive near a spot (radius defaults to 0.3)
-                {
-                  type="TRAVEL",
-                  title="Run to the Well",
-                  coords={ x=60.2, y=42.6, map="Teldrassil" },
-                  radius=0.35,
-                  note="Head to the Moonwell north of the starting area."
-                },
-
-                -- Balance of Nature (part 1)
-                { 
-                  type="ACCEPT", 
-                  title="The Balance of Nature", 
-                  questId=456,
-                  level=2,
-                  coords={ x=58.7, y=44.4, map="Teldrassil" },                
-                  npc = { name="Conservator Ilthalaine" },
-                  note="From Conservator Ilthalaine, Shadowglen." 
-                },
-
-                { 
-                  type="ACCEPT", 
-                  title="Test Quest 3", 
-                  questId=124,
-                  level=1,
-                  coords={ x=58.7, y=44.4, map="Teldrassil" },                
-                  npc = { name="Melithar Staghelm" },
-                  note="From Melithar Staghelm, Shadowglen."
-                },
-
-                -- Travel example: arrive near a spot (radius defaults to 0.3)
-                {
-                  type="TRAVEL",
-                  title="Run to the Well 2",
-                  coords={ x=60.2, y=42.6, map="Teldrassil" },
-                  radius=0.35,
-                  level=1,
-                  note="Head to the Moonwell north of the starting area."
-                },
-            }
-        },
-
-        {
             id       = "Test",
             title    = "Test",
             zone     = "Test",
@@ -152,7 +81,7 @@ QuestShellGuides["Test"] = {
                 { type="COMPLETE", title="The Balance of Nature", questId=457,
                   coords={ x=60.5, y=38.5, map="Teldrassil" },
                   note="Kill 7 Mangy Nightsaber and 7 Thistle Boar north of Shadowglen.",
-                  level=2,
+                  level=3,
                   objectives = {
                       { kind="kill", label="Mangy Nightsaber", target=7 },
                       { kind="kill", label="Thistle Boar", target=7 }                   

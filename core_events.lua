@@ -114,6 +114,34 @@ local function QS__CollectExpectedLabelsForStep(stepIndex, steps)
     return labels
 end
 
+-- Count how many ELIGIBLE ACCEPT steps share this title (ignore completion state)
+local function QS__DupStepsForTitle(title)
+    local steps = QS_GuideData and QS_GuideData() or {}
+    local dup, i = 0, 1
+    while steps[i] do
+        local s = steps[i]
+        if s and s.type == "ACCEPT" and s.title == title then
+            local eligible = (not QS_StepIsEligible) or QS_StepIsEligible(s)
+            if eligible then dup = dup + 1 end
+        end
+        i = i + 1
+    end
+    return dup
+end
+
+-- Count quest log entries with a given title
+local function QS__DupLogForTitle(title)
+    local n = GetNumQuestLogEntries() or 0
+    local dup, i = 0, 1
+    while i <= n do
+        local t, _, _, _, isHeader = GetQuestLogTitle(i)
+        if not isHeader and t == title then dup = dup + 1 end
+        i = i + 1
+    end
+    return dup
+end
+
+
 -- Score a log quest against labels (rough disambiguator for ACCEPT)
 local function QS__ScoreLogIndexAgainstLabels(logIndex, labels)
     if not logIndex or not labels or table.getn(labels) == 0 then return 0 end
@@ -136,26 +164,21 @@ local function QS__ScoreLogIndexAgainstLabels(logIndex, labels)
 end
 
 -- REPLACE the whole QS__BestAcceptStepForLogIndex(...) with this version
--- REPLACE: QS__BestAcceptStepForLogIndex
 local function QS__BestAcceptStepForLogIndex(logIndex)
     if not logIndex then return nil end
     local title, qLevel = GetQuestLogTitle(logIndex)
     if not title then return nil end
 
     local steps = QS_GuideData() or {}
-    local st    = (QS_GuideState and QS_GuideState()) or {}
-    local cur   = st.currentStep or 1
-
-    -- collect eligible ACCEPT steps with same title, not completed
-    local matches = {}
-    local i = 1
+    local matches, i = {}, 1
     while steps[i] do
         local s = steps[i]
         if s and s.type == "ACCEPT" and s.title == title then
-            local notDone   = (not QS_UI_IsStepCompleted) or (not QS_UI_IsStepCompleted(i))
-            local eligible  = (not QS_StepIsEligible) or QS_StepIsEligible(s)
-            if notDone and eligible then
-                matches[table.getn(matches)+1] = { idx=i, lvl=s.level }
+            local eligible = (not QS_StepIsEligible) or QS_StepIsEligible(s)
+            local notDone  = (not QS_UI_IsStepCompleted) or (not QS_UI_IsStepCompleted(i))
+            if eligible and notDone then
+                local k = table.getn(matches) + 1
+                matches[k] = { idx = i, lvl = s.level }
             end
         end
         i = i + 1
@@ -165,7 +188,7 @@ local function QS__BestAcceptStepForLogIndex(logIndex)
     if count == 0 then return nil end
     if count == 1 then return matches[1].idx end
 
-    -- prefer exact LEVEL match from the quest log
+    -- duplicates → require exact level
     if qLevel then
         i = 1
         while matches[i] do
@@ -173,25 +196,19 @@ local function QS__BestAcceptStepForLogIndex(logIndex)
             i = i + 1
         end
     end
-
-    -- tie-break: prefer the current step if among matches
-    i = 1
-    while matches[i] do
-        if matches[i].idx == cur then return cur end
-        i = i + 1
-    end
-
-    -- fallback: first eligible match by title
-    return matches[1].idx
+    return nil -- ambiguous; no level match
 end
 
+
+-- REPLACE: QS__BestLogIndexForAcceptStep
 -- REPLACE: QS__BestLogIndexForAcceptStep
 local function QS__BestLogIndexForAcceptStep(stepIndex)
     local steps = QS_GuideData() or {}
     local s = steps[stepIndex]; if not s or not s.title then return nil end
 
-    local wantTitle = s.title
-    local wantLevel = s.level
+    local wantTitle, wantLevel = s.title, s.level
+    local dupSteps = QS__DupStepsForTitle(wantTitle)
+    local dupLog   = QS__DupLogForTitle(wantTitle)
 
     local n = GetNumQuestLogEntries() or 0
     local firstIdx = nil
@@ -200,12 +217,18 @@ local function QS__BestLogIndexForAcceptStep(stepIndex)
         local t, qLevel, _, _, isHeader = GetQuestLogTitle(i)
         if not isHeader and t == wantTitle then
             if not firstIdx then firstIdx = i end
-            if wantLevel and qLevel and wantLevel == qLevel then return i end
+            if (dupSteps > 1 or dupLog > 1) then
+                if wantLevel and qLevel and wantLevel == qLevel then return i end
+            else
+                return i -- unique by title → safe
+            end
         end
         i = i + 1
     end
+    if (dupSteps > 1 or dupLog > 1) then return nil end
     return firstIdx
 end
+
 
 local function QS__SelectAvailableIndexForAccept(step)
     if not step or step.type ~= "ACCEPT" or not step.title then return nil end
@@ -471,23 +494,34 @@ local function QS__UseItemSatisfied(step)
 end
 
 -- NEW: strict passive rescan (eligible-only)
+-- REPLACE: QS_PassiveResyncAccepts
 function QS_PassiveResyncAccepts()
     local steps = QS_GuideData and QS_GuideData() or {}
-    local i = 1
+    local marked, skipped, i = 0, 0, 1
     while steps[i] do
         local s = steps[i]
         if s and s.type == "ACCEPT" and s.title then
-            local notDone = (not QS_UI_IsStepCompleted) or (not QS_UI_IsStepCompleted(i))
+            local notDone  = (not QS_UI_IsStepCompleted) or (not QS_UI_IsStepCompleted(i))
             local eligible = (not QS_StepIsEligible) or QS_StepIsEligible(s)
             if notDone and eligible then
                 local best = QS__BestLogIndexForAcceptStep and QS__BestLogIndexForAcceptStep(i) or nil
                 if best then
                     if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(i, true) end
+                    marked = marked + 1
+                else
+                    -- If duplicates exist and no level on step, this is expected.
+                    local dup = (QS__DupStepsForTitle(s.title) > 1) or (QS__DupLogForTitle(s.title) > 1)
+                    if dup and (not s.level) and QS_D then
+                        QS_D("Resync skipped ambiguous '"..s.title.."' (add step.level to enable).")
+                    end
+                    skipped = skipped + 1
                 end
             end
         end
         i = i + 1
     end
+    if QS_Print then QS_Print("Resynced ACCEPT steps: "..tostring(marked).." marked, "..tostring(skipped).." skipped.") end
+    return marked
 end
 
 -- NEW: one-shot resync after VARIABLES_LOADED / PLAYER_ENTERING_WORLD
@@ -702,51 +736,46 @@ ev:SetScript("OnEvent", function()
         end
         return
 
-    elseif event == "QUEST_ACCEPTED" then
-        local logIndex = arg1
-        if QS_D then QS_D("QUEST_ACCEPTED idx="..tostring(logIndex)) end
+elseif event == "QUEST_ACCEPTED" then
+    local logIndex = arg1
+    if QS_D then QS_D("QUEST_ACCEPTED idx="..tostring(logIndex)) end
 
-        local st    = QS_GuideState and QS_GuideState() or nil
-        local steps = QS_GuideData and QS_GuideData() or {}
-        local cur   = st and st.currentStep or 1
-        local curStep = steps[cur]
+    local acceptedTitle, acceptedLevel = nil, nil
+    if GetQuestLogTitle and logIndex then
+        acceptedTitle, acceptedLevel = GetQuestLogTitle(logIndex)
+    end
 
-        -- Title at the accepted log index
-        local acceptedTitle = nil
-        if GetQuestLogTitle and logIndex then
-            acceptedTitle = select(1, GetQuestLogTitle(logIndex))
-        end
+    local st     = QS_GuideState and QS_GuideState() or nil
+    local steps  = QS_GuideData and QS_GuideData() or {}
+    local cur    = st and st.currentStep or 1
+    local curStep= steps[cur]
 
-        -- 1) Easy path: title match to current ACCEPT step (case-insensitive)
-        if curStep and string.upper(curStep.type or "") == "ACCEPT" and curStep.title and acceptedTitle then
-            if string.lower(curStep.title) == string.lower(acceptedTitle) then
-                if QS_D then QS_D("ACCEPT matched current step by title → advance") end
-                QS_AdvanceStep()
-                return
+    -- strict resolver (log → step) first
+    local matchIdx = QS__BestAcceptStepForLogIndex and QS__BestAcceptStepForLogIndex(logIndex) or nil
+
+    -- fallback: current step title match only if UNIQUE by title, otherwise require level
+    if (not matchIdx) and curStep and string.upper(curStep.type or "")=="ACCEPT" and curStep.title and acceptedTitle then
+        if string.lower(curStep.title) == string.lower(acceptedTitle) then
+            local dupSteps = QS__DupStepsForTitle(acceptedTitle)
+            if dupSteps <= 1 then
+                matchIdx = cur -- unique by title
+            elseif curStep.level and acceptedLevel and curStep.level == acceptedLevel then
+                matchIdx = cur -- level also matches
             end
         end
+    end
 
-        -- 2) Existing scoring path (labels/IDs) as fallback
-        local currentMatchIdx = nil
-        local bestForCurrent = QS__BestLogIndexForAcceptStep and QS__BestLogIndexForAcceptStep(cur) or nil
-        if bestForCurrent and bestForCurrent == logIndex then
-            currentMatchIdx = cur
-        end
-
-        local matchIdx = currentMatchIdx or (QS__BestAcceptStepForLogIndex and QS__BestAcceptStepForLogIndex(logIndex))
-
-        if matchIdx then
-            if matchIdx == cur then
-                if QS_Print then QS_Print("Accepted: "..(acceptedTitle or "<title>")) end
-                QS_AdvanceStep()
-            else
-                if QS_Print then QS_Print("Accepted out of order (step "..tostring(matchIdx)..") — marking complete") end
-                if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(matchIdx, true) end
-            end
+    if matchIdx then
+        if matchIdx == cur then
+            if QS_Print then QS_Print("Accepted: "..(acceptedTitle or "<title>")) end
+            QS_AdvanceStep()
         else
-            if QS_D then QS_D("ACCEPT could not match step for "..tostring(acceptedTitle or "<nil>")) end
+            if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(matchIdx, true) end
         end
-        return
+    else
+        if QS_D then QS_D("ACCEPT ambiguous for '"..tostring(acceptedTitle or "").."'; add step.level to disambiguate.") end
+    end
+    return
 
     elseif event == "QUEST_LOG_UPDATE" then
         -- confirm accepts (legacy path)
