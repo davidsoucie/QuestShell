@@ -16,6 +16,7 @@ ui_tracker.lua
 ui_arrow.lua
 ui_steps.lua
 ui_menu.lua
+ui_options.lua
 
 guide_alliance_1_20.lua
 guide_test.lua

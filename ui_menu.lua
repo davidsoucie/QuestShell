@@ -6,6 +6,7 @@ QuestShellUI = QuestShellUI or {}
 
 local menuFrame, guidesScroll, chScroll, importBtn, optionsBtn
 
+-- REPLACE the whole EnsureMenu(...) with this version
 local function EnsureMenu(parent)
     if menuFrame then return end
     menuFrame = CreateFrame("Frame", "QuestShellMenu", UIParent)
@@ -88,9 +89,14 @@ local function EnsureMenu(parent)
     optionsBtn:SetWidth(80); optionsBtn:SetHeight(22)
     optionsBtn:SetText("Options")
     optionsBtn:SetScript("OnClick", function()
-        UIErrorsFrame:AddMessage("Options coming soon.", 0.8,0.8,1, 1.0, 3)
+        if QuestShellUI and QuestShellUI.ShowOptions then
+            QuestShellUI.ShowOptions()
+        else
+            UIErrorsFrame:AddMessage("Options UI missing.", 1,0.4,0.4, 1.0, 3)
+        end
     end)
 end
+
 
 local function RefreshChaptersForGuide(name)
     if not chScroll then return end
