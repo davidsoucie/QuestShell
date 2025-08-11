@@ -233,62 +233,63 @@ local function QS__SelectAvailableIndexForAccept(step)
     return nil
 end
 
+-- Find the next step index > fromIndex that is NOT completed and IS eligible.
+local function QS__FindNextEligibleIncomplete(steps, completedSet, fromIndex)
+    local n = table.getn(steps or {})
+    local i = (fromIndex or 0) + 1
+    while i <= n do
+        local s = steps[i]
+        local eligible = (not QS_StepIsEligible) or QS_StepIsEligible(s)
+        if s and eligible and (not completedSet or not completedSet[i]) then
+            return i
+        end
+        i = i + 1
+    end
+    return n + 1 -- sentinel: past the end
+end
+
 -- ------------------------------------------------------------
 -- Step advancement that skips steps already checked
 -- ------------------------------------------------------------
-function QS_AdvanceStep()
-    local steps = QS_GuideData()
-    local st = QS_GuideState()
-    if not steps or not st then return end
+function QS_AdvanceStep(markCurrentComplete)
+    -- state
+    if not QuestShellDB or not QuestShellDB.guides or not QuestShell.activeGuide then return end
+    local st = QuestShellDB.guides[QuestShell.activeGuide]; if not st then return end
 
+    local chapter = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
     st.completedByChapter = st.completedByChapter or {}
-    local ch = QS_CurrentChapterIndex()
-    local arr = st.completedByChapter[ch] or {}
-    arr[table.getn(arr)+1] = st.currentStep
-    st.completedByChapter[ch] = arr
+    local set = st.completedByChapter[chapter] or {}
+    st.completedByChapter[chapter] = set
 
-    -- set of completed indices
-    local set = {}
-    local i = 1
-    while i <= table.getn(arr) do set[arr[i]] = true; i = i + 1 end
-
+    local steps = (QS_GuideData and QS_GuideData()) or {}
     local n = table.getn(steps or {})
-    local nextIdx = st.currentStep + 1
-    while nextIdx <= n do
-    local s = steps[nextIdx]
-    if not set[nextIdx] and (not QS_StepIsEligible or QS_StepIsEligible(s)) then
-        break
+    if n == 0 then return end
+
+    local cur = st.currentStep or 1
+
+    if QS_D then QS_D("Current Step (Cur) "..(cur or "")) end
+
+    if cur < 1 then cur = 1 end
+    if cur > n then cur = n end
+
+    -- mark current as completed unless explicitly told not to
+    if markCurrentComplete ~= false then
+        set[cur] = true
     end
-    nextIdx = nextIdx + 1
-    end
+
+    -- clear transient trackers
+    if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
+    if itemTrack then itemTrack.itemId, itemTrack.prevCount, itemTrack.lastChangeTime = nil, nil, 0 end
+
+    -- find next eligible, incomplete step AFTER current (class-gated aware)
+    local nextIdx = QS__FindNextEligibleIncomplete(steps, set, cur)
+
     st.currentStep = nextIdx
 
-    -- clear trackers on advance; reset COMPLETE suppression for new step
-    itemTrack.itemId, itemTrack.prevCount, itemTrack.lastChangeTime = nil, nil, 0
-    _qsArrivedForStepIdx = nil
-    _qsLastStepIdx = nil
-    if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
-
-    -- within current chapter?
-    if st.currentStep <= n then
-        if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
-        return
-    end
-
-    -- next chapter?
-    local nCh = QS_ChapterCount and QS_ChapterCount() or 1
-    if QS_CurrentChapterIndex() < nCh and QuestShell and QuestShell.SetChapter then
-        QuestShell.SetChapter(QS_CurrentChapterIndex() + 1)
-        if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
-        return
-    end
-
-    -- or next guide
-    if QS_LoadNextGuideIfAny and QS_LoadNextGuideIfAny() then
-        if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
-        return
-    end
+    -- refresh all UI + (re)prime arrow/behaviors through your normal path
+    if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
 end
+
 
 -- ------------------------------------------------------------
 -- Global UI aggregator (called by other modules and on boot)
@@ -343,9 +344,14 @@ local function QS__MaybePrimeTravelAndArrow()
 end
 
 function QuestShellUI_UpdateAll()
-    local steps = QS_GuideData and QS_GuideData() or {}
-    local st = QS_GuideState and QS_GuideState() or {}
-    local ch = QS_CurrentChapterIndex and QS_CurrentChapterIndex() or 1
+    -- Skip normalization once after a manual click/jump
+    local skip = QuestShell and QuestShell._skipNormalizeOnce
+    if QuestShell then QuestShell._skipNormalizeOnce = nil end
+    if (not skip) and QS_NormalizeCurrentStep then QS_NormalizeCurrentStep() end
+
+    local steps = (QS_GuideData and QS_GuideData()) or {}
+    local st = (QS_GuideState and QS_GuideState()) or {}
+    local ch = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
 
     -- completed set for current chapter
     local set = {}
@@ -390,28 +396,37 @@ local function QS__CompleteCurrentStep()
     if QS_AdvanceStep then QS_AdvanceStep() end
 end
 
-local function QS__WithinTravelRadius(step)
+local function _WithinTravelRadius(step)
     if not step or not step.coords or not step.coords.x or not step.coords.y then return false end
-    local playerZone = GetRealZoneText() or GetZoneText() or ""
-    local wantMap = step.coords.map or ""
 
-    if wantMap ~= "" and string.lower(playerZone) ~= string.lower(wantMap) then
-        return false
-    end
-
-    SetMapToCurrentZone()
-    local px, py = GetPlayerMapPosition("player")
-    if not px or not py or (px == 0 and py == 0) then return false end
-
+    -- Target coords normalized to 0..1
     local tx = (step.coords.x or 0) / 100.0
     local ty = (step.coords.y or 0) / 100.0
-    local dx = tx - px
-    local dy = ty - py
-    local dist = math.sqrt(dx*dx + dy*dy) * 100.0  -- same scale used by arrow
 
-    local r = step.radius or 0.3   -- default small radius in "map percent" units
-    if r < 0.05 then r = 0.05 end
-    return dist <= r
+    -- Prefer UnitPosition if present (later clients)
+    if UnitPosition then
+        local px, py = UnitPosition("player")
+        if not px or not py then return false end
+        local dx, dy = tx - px, ty - py
+        local dist = math.sqrt(dx*dx + dy*dy)
+        local r = (step.radius or 0.3) / 100.0   -- keep your existing radius semantics
+        if r < 0.0005 then r = 0.0005 end
+        return dist <= r
+    end
+
+    -- Vanilla/Turtle fallback: map-based position
+    if SetMapToCurrentZone and GetPlayerMapPosition then
+        SetMapToCurrentZone()
+        local px, py = GetPlayerMapPosition("player")
+        if not px or not py then return false end
+        local dx, dy = tx - px, ty - py
+        local dist = math.sqrt(dx*dx + dy*dy)
+        local r = (step.radius or 0.3) / 100.0   -- radius still in “percent of map”
+        if r < 0.0005 then r = 0.0005 end
+        return dist <= r
+    end
+
+    return false
 end
 
 local function QS__UseItemSatisfied(step)
@@ -639,32 +654,47 @@ ev:SetScript("OnEvent", function()
 
     elseif event == "QUEST_ACCEPTED" then
         local logIndex = arg1
-        if QS_D then QS_D("QUEST_ACCEPTED index "..tostring(logIndex)) end
+        if QS_D then QS_D("QUEST_ACCEPTED idx="..tostring(logIndex)) end
 
-        local st = QS_GuideState and QS_GuideState() or nil
-        local cur = st and st.currentStep or 1
+        local st    = QS_GuideState and QS_GuideState() or nil
+        local steps = QS_GuideData and QS_GuideData() or {}
+        local cur   = st and st.currentStep or 1
+        local curStep = steps[cur]
 
+        -- Title at the accepted log index
+        local acceptedTitle = nil
+        if GetQuestLogTitle and logIndex then
+            acceptedTitle = select(1, GetQuestLogTitle(logIndex))
+        end
+
+        -- 1) Easy path: title match to current ACCEPT step (case-insensitive)
+        if curStep and string.upper(curStep.type or "") == "ACCEPT" and curStep.title and acceptedTitle then
+            if string.lower(curStep.title) == string.lower(acceptedTitle) then
+                if QS_D then QS_D("ACCEPT matched current step by title → advance") end
+                QS_AdvanceStep()
+                return
+            end
+        end
+
+        -- 2) Existing scoring path (labels/IDs) as fallback
         local currentMatchIdx = nil
         local bestForCurrent = QS__BestLogIndexForAcceptStep and QS__BestLogIndexForAcceptStep(cur) or nil
         if bestForCurrent and bestForCurrent == logIndex then
             currentMatchIdx = cur
         end
 
-        local matchIdx = currentMatchIdx or QS__BestAcceptStepForLogIndex(logIndex)
+        local matchIdx = currentMatchIdx or (QS__BestAcceptStepForLogIndex and QS__BestAcceptStepForLogIndex(logIndex))
 
         if matchIdx then
             if matchIdx == cur then
-                awaitingAcceptTitle = nil
-                if QS_Print then
-                    local t = select(1, GetQuestLogTitle(logIndex)) or ""
-                    QS_Print("Accepted: "..t)
-                end
+                if QS_Print then QS_Print("Accepted: "..(acceptedTitle or "<title>")) end
                 QS_AdvanceStep()
             else
                 if QS_Print then QS_Print("Accepted out of order (step "..tostring(matchIdx)..") — marking complete") end
                 if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(matchIdx, true) end
-                awaitingAcceptTitle = nil
             end
+        else
+            if QS_D then QS_D("ACCEPT could not match step for "..tostring(acceptedTitle or "<nil>")) end
         end
         return
 
