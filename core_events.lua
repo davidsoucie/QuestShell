@@ -140,70 +140,107 @@ local function QS__ScoreLogIndexAgainstLabels(logIndex, labels)
     return score
 end
 
+-- REPLACE the whole QS__BestAcceptStepForLogIndex(...) with this version
+-- REPLACE: QS__BestAcceptStepForLogIndex
 local function QS__BestAcceptStepForLogIndex(logIndex)
     if not logIndex then return nil end
     local title, qLevel = GetQuestLogTitle(logIndex)
     if not title then return nil end
 
-    local qid = QS__LogQuestID(logIndex)
     local steps = QS_GuideData() or {}
+    local qid   = (QS__LogQuestID and QS__LogQuestID(logIndex)) or nil
 
-    local bestIdx, bestScore, bestLabels = nil, -1, 0
-    local secondBest = -1
-
+    local matches = {}
     local i = 1
     while steps[i] do
         local s = steps[i]
-        if s and s.type == "ACCEPT" and s.title == title and not (QS_UI_IsStepCompleted and QS_UI_IsStepCompleted(i)) then
-            if qid and s.questId and s.questId == qid then
-                return i
-            end
-            if s.level and qLevel and s.level == qLevel then
-                return i
-            end
-            local labels = QS__CollectExpectedLabelsForStep(i, steps)
-            local need = table.getn(labels)
-            local sc = QS__ScoreLogIndexAgainstLabels(logIndex, labels)
-            if sc > bestScore then
-                secondBest = bestScore
-                bestScore, bestIdx, bestLabels = sc, i, need
-            elseif sc > secondBest then
-                secondBest = sc
+        local ok = s and s.type == "ACCEPT" and s.title == title
+        if ok and (not QS_UI_IsStepCompleted or not QS_UI_IsStepCompleted(i)) then
+            if (not QS_StepIsEligible) or QS_StepIsEligible(s) then
+                matches[table.getn(matches)+1] = { idx=i, lvl=s.level, qid=s.questId }
             end
         end
         i = i + 1
     end
 
-    if bestIdx and bestScore >= bestLabels and bestScore > secondBest then
-        return bestIdx
+    local count = table.getn(matches)
+    if count == 0 then return nil end
+    if count == 1 then return matches[1].idx end
+
+    if qid then
+        i = 1
+        while matches[i] do
+            if matches[i].qid and matches[i].qid == qid then return matches[i].idx end
+            i = i + 1
+        end
     end
-    return nil
+
+    if qLevel then
+        i = 1
+        while matches[i] do
+            if matches[i].lvl and matches[i].lvl == qLevel then return matches[i].idx end
+            i = i + 1
+        end
+    end
+
+    local st = QS_GuideState and QS_GuideState() or nil
+    local cur = st and st.currentStep or nil
+    if cur then
+        i = 1
+        while matches[i] do
+            if matches[i].idx == cur then return cur end
+            i = i + 1
+        end
+    end
+
+    return matches[1].idx
 end
 
+-- REPLACE: QS__BestLogIndexForAcceptStep
 local function QS__BestLogIndexForAcceptStep(stepIndex)
     local steps = QS_GuideData() or {}
     local s = steps[stepIndex]; if not s or not s.title then return nil end
-    local n = GetNumQuestLogEntries() or 0
 
-    local wantID = s.questId
+    local wantTitle = s.title
     local wantLevel = s.level
-    local labels = QS__CollectExpectedLabelsForStep(stepIndex, steps)
-    local need = table.getn(labels)
+    local wantID    = s.questId
 
-    local bestIdx, bestScore, i = nil, -1, 1
+    local n = GetNumQuestLogEntries() or 0
+    local cands = {}
+    local i = 1
     while i <= n do
         local t, qLevel, _, _, isHeader = GetQuestLogTitle(i)
-        if not isHeader and t == s.title then
-            local qid = QS__LogQuestID(i)
-            if wantID and qid and wantID == qid then return i end
-            if wantLevel and qLevel and wantLevel == qLevel then return i end
-            local sc = QS__ScoreLogIndexAgainstLabels(i, labels)
-            if sc > bestScore then bestScore, bestIdx = sc, i end
+        if not isHeader and t == wantTitle then
+            cands[table.getn(cands)+1] = {
+                idx = i,
+                lvl = qLevel,
+                qid = (QS__LogQuestID and QS__LogQuestID(i)) or nil
+            }
         end
         i = i + 1
     end
-    if bestIdx and bestScore >= need and need > 0 then return bestIdx end
-    return nil
+
+    local count = table.getn(cands)
+    if count == 0 then return nil end
+    if count == 1 then return cands[1].idx end
+
+    if wantID then
+        i = 1
+        while cands[i] do
+            if cands[i].qid and cands[i].qid == wantID then return cands[i].idx end
+            i = i + 1
+        end
+    end
+
+    if wantLevel then
+        i = 1
+        while cands[i] do
+            if cands[i].lvl and cands[i].lvl == wantLevel then return cands[i].idx end
+            i = i + 1
+        end
+    end
+
+    return cands[1].idx
 end
 
 local function QS__SelectAvailableIndexForAccept(step)
@@ -469,6 +506,9 @@ end
 ev:SetScript("OnEvent", function()
     local event = event -- vanilla arg
     -- Behavior dispatch (early)
+    -- REPLACE ONLY the Behavior dispatch block at the top of the handler with this:
+
+    -- Behavior dispatch (early)
     local step = QS_CurrentStep and QS_CurrentStep() or nil
     if step then
         local st = QS_GuideState and QS_GuideState() or {}
@@ -480,9 +520,7 @@ ev:SetScript("OnEvent", function()
             if ok and ret then
                 if ret.advance then
                     if QS_D then QS_D("Behavior requested advance for "..(step.type or "")) end
-                    if QS_UI_SetStepCompleted and st and st.currentStep then
-                        QS_UI_SetStepCompleted(st.currentStep, true)
-                    end
+                    -- Do NOT pre-mark here; QS_AdvanceStep will mark+advance once.
                     if QS_AdvanceStep then QS_AdvanceStep() end
                     return
                 end
@@ -774,6 +812,7 @@ end)
 -- ------------------------------------------------------------
 -- OnUpdate poller (0.2s): delegate to step behavior
 -- ------------------------------------------------------------
+-- REPLACE the entire travelPoll:SetScript("OnUpdate", ...) with this
 local travelPoll = CreateFrame("Frame", "QuestShellTravelPoll")
 travelPoll:SetScript("OnUpdate", function()
     travelUpdateAccum = travelUpdateAccum + (arg1 or 0)
@@ -790,18 +829,16 @@ travelPoll:SetScript("OnUpdate", function()
     local state = _StateFor(idx)
     local ok, ret = pcall(beh.onUpdate, step, { dt=0.2, helpers={ WithinRadius=_WithinTravelRadius } }, state)
     if not ok then return end
+
     if ret and ret.arrived then
         _qsArrivedForStepIdx = idx
         if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
         return
     end
+
     if ret and ret.advance then
         if QS_D then QS_D("Behavior requested advance for "..(step.type or "")) end
-        -- mark complete and advance
-        if QS_UI_SetStepCompleted and QS_GuideState then
-            local st2 = QS_GuideState()
-            if st2 and st2.currentStep then QS_UI_SetStepCompleted(st2.currentStep, true) end
-        end
+        -- Do NOT pre-mark here; QS_AdvanceStep will mark+advance once.
         if QS_AdvanceStep then QS_AdvanceStep() end
         return
     end
