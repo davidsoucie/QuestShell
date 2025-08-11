@@ -6,7 +6,7 @@
 
 QuestShell = QuestShell or {}
 -- default guide on startup
-if QuestShell.activeGuide == nil then QuestShell.activeGuide = "Test" end
+if QuestShell.activeGuide == nil then QuestShell.activeGuide = "Night Elf 1-60" end
 if QuestShell.debug == nil then QuestShell.debug = true end
 
 function QS_Print(m) if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[QuestShell]|r "..tostring(m)) end end
