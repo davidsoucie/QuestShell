@@ -125,7 +125,9 @@ function QuestShell.SetChapter(idx)
     local steps = QS_GuideData() or {}
     local total = table.getn(steps)
     local cur = 1
-    while cur <= total and doneSet[cur] do cur = cur + 1 end
+    while cur <= total and (doneSet[cur] or (QS_StepIsEligible and not QS_StepIsEligible(steps[cur]))) do
+    cur = cur + 1
+    end
     st.currentStep = cur
 
     QS_Print("Switched to chapter "..idx.."/"..n..": "..(QS_ChapterMeta(idx).title or ""))

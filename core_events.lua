@@ -254,8 +254,12 @@ function QS_AdvanceStep()
 
     local n = table.getn(steps or {})
     local nextIdx = st.currentStep + 1
-    while nextIdx <= n and set[nextIdx] do
-        nextIdx = nextIdx + 1
+    while nextIdx <= n do
+    local s = steps[nextIdx]
+    if not set[nextIdx] and (not QS_StepIsEligible or QS_StepIsEligible(s)) then
+        break
+    end
+    nextIdx = nextIdx + 1
     end
     st.currentStep = nextIdx
 

@@ -43,6 +43,31 @@ function QS_EnsureDB()
     end
 end
 
+local function QS__PlayerClass()
+  local _, c = UnitClass("player"); return string.upper(c or "")
+end
+
+function QS_StepIsEligible(step)
+  if not step then return true end
+  local me = QS__PlayerClass()
+
+  -- single string: class = "WARRIOR"
+  if step.class and type(step.class) == "string" then
+    return string.upper(step.class) == me
+  end
+
+  -- list: classes = {"WARRIOR","PALADIN"}
+  if step.classes and type(step.classes) == "table" then
+    local i=1; while step.classes[i] do
+      if string.upper(step.classes[i]) == me then return true end
+      i=i+1
+    end
+    return false
+  end
+
+  return true
+end
+
 -- --- Bag / Item helpers (Lua 5.0 safe) --------------------
 local function QS__ItemIdFromLink(link)
     if not link then return nil end

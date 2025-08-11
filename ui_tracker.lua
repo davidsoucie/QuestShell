@@ -235,16 +235,30 @@ local function RenderRows(rows)
 end
 
 -- ------------------------- Header -------------------------
-local function UpdateHeaderStep()
-    local total = 0
-    local d = QS_GuideData and QS_GuideData() or nil
-    if d then total = table.getn(d) or 0 end
-    local cur = 1
-    if QuestShellDB and QuestShellDB.guides then
-        local st = QuestShellDB.guides[QuestShell.activeGuide]
-        if st and st.currentStep then cur = st.currentStep end
+function UpdateHeaderStep()
+    local steps = (QS_GuideData and QS_GuideData()) or {}
+    local n = table.getn(steps or {})
+
+    local function isEligible(i)
+        local s = steps[i]
+        if not s then return false end
+        return (not QS_StepIsEligible) or QS_StepIsEligible(s)
     end
-    headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
+
+    -- current = ordinal among eligible steps (skip gated)
+    local curIdx = 1
+    local st = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
+    if st and st.currentStep then curIdx = st.currentStep end
+
+    local cur = 0
+    local i = 1
+    while i <= math.min(curIdx, n) do
+        if isEligible(i) then cur = cur + 1 end
+        i = i + 1
+    end
+    if cur == 0 and n > 0 then cur = 1 end
+
+    headerStepFS:SetText("Step "..tostring(cur))
 end
 
 -- ------------------------- Create tracker -------------------------

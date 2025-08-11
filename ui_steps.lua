@@ -182,19 +182,45 @@ local function ResizeRowsToWidth()
 end
 
 -- ------------------------ Header ------------------------
-local function SetHeaderFromChapter()
+function SetHeaderFromChapter()
     local meta = QS_ChapterMeta and QS_ChapterMeta(QS_CurrentChapterIndex() or 1) or nil
     local gmeta = QS_GuideMeta and QS_GuideMeta() or {}
     local title = (meta and meta.title) or (gmeta.title or "QuestShell")
     local minL = meta and meta.minLevel or gmeta.minLevel
     local maxL = meta and meta.maxLevel or gmeta.maxLevel
     local levels = ""; if minL or maxL then levels = "  "..tostring(minL or "?").."-"..tostring(maxL or "?") end
+
     headerTitle:SetText("|cffffee00"..title.."|r"); headerLevelFS:SetText(levels)
 
-    local steps = QS_GuideData() or {}
-    local total = table.getn(steps or {}); local cur = 1
+    local steps = (QS_GuideData and QS_GuideData()) or {}
+    local n = table.getn(steps or {})
+
+    local function isEligible(i)
+        local s = steps[i]
+        if not s then return false end
+        return (not QS_StepIsEligible) or QS_StepIsEligible(s)
+    end
+
+    -- total eligible
+    local total = 0
+    local i = 1
+    while i <= n do
+        if isEligible(i) then total = total + 1 end
+        i = i + 1
+    end
+
+    -- current eligible ordinal
+    local curIdx = 1
     local st = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
-    if st and st.currentStep then cur = st.currentStep end
+    if st and st.currentStep then curIdx = st.currentStep end
+    local cur = 0
+    i = 1
+    while i <= math.min(curIdx, n) do
+        if isEligible(i) then cur = cur + 1 end
+        i = i + 1
+    end
+    if cur == 0 and total > 0 then cur = 1 end
+
     headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
 end
 
@@ -219,79 +245,87 @@ local function RebuildContent(steps, currentIndex, completedMap)
     local contentW = w - (CHECKBOX_W + 12)
     local textW = math.max(1, contentW - TEXT_X)
 
-    local i = 1
+
+    local i, j = 1, 1
     while i <= total do
-        local row = rowPool and rowPool[i] or MakeRow(i)
-        rowPool = rowPool or {}; rowPool[i] = row
-        row._index = i
-
         local step = steps[i]
-        local isCompleted = (completedMap and completedMap[i]) or false
-        row.chk:SetChecked(isCompleted)
+        local eligible = (not QS_StepIsEligible) or QS_StepIsEligible(step)
+        if eligible then
+            local row = rowPool and rowPool[j] or MakeRow(j)
+            rowPool = rowPool or {}; rowPool[j] = row
+            row._index = i       -- IMPORTANT: keep the real step index
 
-        local baseAlpha = (math.mod(i, 2) == 0) and ZEBRA_EVEN_ALPHA or ZEBRA_ODD_ALPHA
-        local tint = (i == currentIndex) and SELECT_ALPHA or baseAlpha
-        row.bg:SetVertexColor(1,1,1, tint)
+            local step = steps[i]
+            local isCompleted = (completedMap and completedMap[i]) or false
+            row.chk:SetChecked(isCompleted)
 
-        local lines = BuildRows(step, step and step.title or "", isCompleted)
-        local cy = 0
+            local baseAlpha = (math.mod(i, 2) == 0) and ZEBRA_EVEN_ALPHA or ZEBRA_ODD_ALPHA
+            local tint = (i == currentIndex) and SELECT_ALPHA or baseAlpha
+            row.bg:SetVertexColor(1,1,1, tint)
 
-        local k = 1
-        while row.lines[k] do
-            local slot = row.lines[k]; local data = lines[k]
-            if data then
-                local anchorY = -cy
+            local lines = BuildRows(step, step and step.title or "", isCompleted)
+            local cy = 0
 
-                slot.bullet:ClearAllPoints()
-                slot.bullet:SetPoint("TOPLEFT", row, "TOPLEFT", 0, anchorY)
-                if data.bullet then
-                    slot.bullet:Show()
-                    if data.done then slot.check:SetAlpha(1); slot.check:SetVertexColor(0.20,1.00,0.20) else slot.check:SetAlpha(0) end
+            local k = 1
+            while row.lines[k] do
+                local slot = row.lines[k]; local data = lines[k]
+                if data then
+                    local anchorY = -cy
+
+                    slot.bullet:ClearAllPoints()
+                    slot.bullet:SetPoint("TOPLEFT", row, "TOPLEFT", 0, anchorY)
+                    if data.bullet then
+                        slot.bullet:Show()
+                        if data.done then slot.check:SetAlpha(1); slot.check:SetVertexColor(0.20,1.00,0.20) else slot.check:SetAlpha(0) end
+                    else
+                        slot.bullet:Hide(); slot.check:SetAlpha(0)
+                    end
+
+                    slot.icon:ClearAllPoints()
+                    slot.icon:SetPoint("TOPLEFT", row, "TOPLEFT", GUTTER_BULLET_W + GUTTER_GAP, anchorY)
+                    if data.icon then
+                        slot.icon:Show(); slot.icon:SetTexture(data.icon)
+                    else
+                        slot.icon:Hide()
+                    end
+
+                    local txt = data.text or ""
+                    slot.fs:ClearAllPoints()
+                    slot.fs:SetPoint("TOPLEFT", row, "TOPLEFT", TEXT_X, anchorY)
+                    slot.fs:SetWidth(textW)
+                    slot.fs:SetText(txt)
+                    if data.done then slot.fs:SetTextColor(0.6,1.0,0.6) else slot.fs:SetTextColor(1,1,1) end
+                    slot.fs:Show()
+
+                    local h = MeasureTextHeight(txt, textW)
+                    if h < ICON_W then h = ICON_W end
+                    cy = cy + h + ROW_VGAP
                 else
                     slot.bullet:Hide(); slot.check:SetAlpha(0)
+                    slot.icon:Hide(); slot.fs:SetText(""); slot.fs:Hide()
                 end
-
-                slot.icon:ClearAllPoints()
-                slot.icon:SetPoint("TOPLEFT", row, "TOPLEFT", GUTTER_BULLET_W + GUTTER_GAP, anchorY)
-                if data.icon then
-                    slot.icon:Show(); slot.icon:SetTexture(data.icon)
-                else
-                    slot.icon:Hide()
-                end
-
-                local txt = data.text or ""
-                slot.fs:ClearAllPoints()
-                slot.fs:SetPoint("TOPLEFT", row, "TOPLEFT", TEXT_X, anchorY)
-                slot.fs:SetWidth(textW)
-                slot.fs:SetText(txt)
-                if data.done then slot.fs:SetTextColor(0.6,1.0,0.6) else slot.fs:SetTextColor(1,1,1) end
-                slot.fs:Show()
-
-                local h = MeasureTextHeight(txt, textW)
-                if h < ICON_W then h = ICON_W end
-                cy = cy + h + ROW_VGAP
-            else
-                slot.bullet:Hide(); slot.check:SetAlpha(0)
-                slot.icon:Hide(); slot.fs:SetText(""); slot.fs:Hide()
+                k = k + 1
             end
-            k = k + 1
+
+            if cy > 0 then cy = cy - ROW_VGAP end
+            local rowH = math.max(20, cy)
+            row:SetHeight(rowH)
+            row:ClearAllPoints()
+            row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -y)
+            row:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
+
+            row.chk:ClearAllPoints()
+            row.chk:SetPoint("TOPRIGHT", row, "TOPRIGHT", 0, - math.floor(rowH/2 - CHECKBOX_W/2))
+
+            y = y + rowH + STEP_GAP
+            row:Show()
+
+            j = j + 1
         end
-
-        if cy > 0 then cy = cy - ROW_VGAP end
-        local rowH = math.max(20, cy)
-        row:SetHeight(rowH)
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -y)
-        row:SetPoint("RIGHT", scrollChild, "RIGHT", 0, 0)
-
-        row.chk:ClearAllPoints()
-        row.chk:SetPoint("TOPRIGHT", row, "TOPRIGHT", 0, - math.floor(rowH/2 - CHECKBOX_W/2))
-
-        y = y + rowH + STEP_GAP
-        row:Show()
         i = i + 1
     end
-    while rowPool and rowPool[i] do rowPool[i]:Hide(); i = i + 1 end
+
+    while rowPool and rowPool[j] do rowPool[j]:Hide(); j = j + 1 end
 
     scrollChild:SetHeight(y)
     SetHeaderFromChapter()

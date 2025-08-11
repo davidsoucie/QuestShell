@@ -20,6 +20,29 @@ QuestShellGuides["Test"] = {
             maxLevel = 12,
 
             steps = {
+
+                { 
+                  type="ACCEPT", 
+                  title="The Warrior Quest", 
+                  questId=111,
+                  coords={ x=58.7, y=44.4, map="Teldrassil" },                
+                  level=2,
+                  npc = { name="Melithar Staghelm" },
+                  note="From Melithar Staghelm, Shadowglen.",
+                  class="WARRIOR"
+                },
+
+                { 
+                  type="ACCEPT", 
+                  title="The Hunter Quest", 
+                  questId=111,
+                  coords={ x=58.7, y=44.4, map="Teldrassil" },                
+                  level=2,
+                  npc = { name="Melithar Staghelm" },
+                  note="From Melithar Staghelm, Shadowglen.",
+                  class="HUNTER"
+                },
+
                 -- The Woodland Protector (part 1)
                 { 
                   type="ACCEPT", 
