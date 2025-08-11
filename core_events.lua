@@ -222,24 +222,28 @@ local function QS__BestLogIndexForAcceptStep(stepIndex)
 
     local count = table.getn(cands)
     if count == 0 then return nil end
-    if count == 1 then return cands[1].idx end
 
+    -- If the step specifies a questId, require that exact id.
     if wantID then
         i = 1
         while cands[i] do
             if cands[i].qid and cands[i].qid == wantID then return cands[i].idx end
             i = i + 1
         end
+        return nil
     end
 
+    -- If the step specifies a level, require an exact level match.
     if wantLevel then
         i = 1
         while cands[i] do
             if cands[i].lvl and cands[i].lvl == wantLevel then return cands[i].idx end
             i = i + 1
         end
+        return nil
     end
 
+    -- No disambiguators provided → first candidate by title.
     return cands[1].idx
 end
 
@@ -295,17 +299,19 @@ function QS_AdvanceStep(markCurrentComplete)
 
     local chapter = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
     st.completedByChapter = st.completedByChapter or {}
-    local set = st.completedByChapter[chapter] or {}
-    st.completedByChapter[chapter] = set
+
+    -- saved shape is an ARRAY of completed indices → build a SET for work
+    local arr = st.completedByChapter[chapter] or {}
+    local set = {}
+    local i = 1
+    while arr and arr[i] do set[arr[i]] = true; i = i + 1 end
 
     local steps = (QS_GuideData and QS_GuideData()) or {}
     local n = table.getn(steps or {})
     if n == 0 then return end
 
     local cur = st.currentStep or 1
-
     if QS_D then QS_D("Current Step (Cur) "..(cur or "")) end
-
     if cur < 1 then cur = 1 end
     if cur > n then cur = n end
 
@@ -319,14 +325,18 @@ function QS_AdvanceStep(markCurrentComplete)
     if itemTrack then itemTrack.itemId, itemTrack.prevCount, itemTrack.lastChangeTime = nil, nil, 0 end
 
     -- find next eligible, incomplete step AFTER current (class-gated aware)
-    local nextIdx = QS__FindNextEligibleIncomplete(steps, set, cur)
-
+    local nextIdx = QS__FindNextEligibleIncomplete and QS__FindNextEligibleIncomplete(steps, set, cur) or (cur + 1)
     st.currentStep = nextIdx
+
+    -- WRITE BACK as ARRAY (ascending) — this is what UIs expect
+    local out = {}
+    i = 1
+    while i <= n do if set[i] then out[table.getn(out)+1] = i end i = i + 1 end
+    st.completedByChapter[chapter] = out
 
     -- refresh all UI + (re)prime arrow/behaviors through your normal path
     if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
 end
-
 
 -- ------------------------------------------------------------
 -- Global UI aggregator (called by other modules and on boot)
@@ -783,21 +793,25 @@ ev:SetScript("OnEvent", function()
             end
         end
 
-        -- Passive scan: mark any ACCEPT steps already in the log (duplicate-safe)
-        local steps2 = QS_GuideData and QS_GuideData() or {}
-        local ii = 1
-        while steps2[ii] do
-            local s2 = steps2[ii]
-            if s2 and s2.type == "ACCEPT" and s2.title then
-                if QS_UI_IsStepCompleted and not QS_UI_IsStepCompleted(ii) then
-                    local best = QS__BestLogIndexForAcceptStep(ii)
-                    if best then
-                        if QS_Print then QS_Print("Detected already accepted: "..(s2.title or "").." (step "..tostring(ii)..")") end
-                        if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(ii, true) end
+        -- Passive scan: mark any ACCEPT steps already in the log (eligible-only, strict match)
+        do
+            local steps2 = QS_GuideData and QS_GuideData() or {}
+            local ii = 1
+            while steps2[ii] do
+                local s2 = steps2[ii]
+                if s2 and s2.type == "ACCEPT" and s2.title then
+                    local notDone = (not QS_UI_IsStepCompleted) or (not QS_UI_IsStepCompleted(ii))
+                    local eligible = (not QS_StepIsEligible) or QS_StepIsEligible(s2)
+                    if notDone and eligible then
+                        local best = QS__BestLogIndexForAcceptStep(ii)
+                        if best then
+                            if QS_Print then QS_Print("Detected already accepted: "..(s2.title or "").." (step "..tostring(ii)..")") end
+                            if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(ii, true) end
+                        end
                     end
                 end
+                ii = ii + 1
             end
-            ii = ii + 1
         end
 
         if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end

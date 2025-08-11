@@ -22,21 +22,12 @@ QuestShellGuides["Test"] = {
 
             steps = {
                               -- The Woodland Protector (part 1)
-                { 
-                  type="ACCEPT", 
-                  title="The Woodland Protector", 
-                  questId=111,
-                  level=1,
-                  coords={ x=58.7, y=44.4, map="Teldrassil" },                
-                  npc = { name="Melithar Staghelm" },
-                  note="From Melithar Staghelm, Shadowglen."
-                },
+
 
                 { 
                   type="ACCEPT", 
                   title="Test Quest 1", 
-                  questId=123,
-                  level=1,
+                  questId=123,                
                   coords={ x=58.7, y=44.4, map="Teldrassil" },                
                   npc = { name="Melithar Staghelm" },
                   note="From Melithar Staghelm, Shadowglen."
@@ -46,7 +37,6 @@ QuestShellGuides["Test"] = {
                   type="ACCEPT", 
                   title="Test Quest 2", 
                   questId=124,
-                  level=1,
                   coords={ x=58.7, y=44.4, map="Teldrassil" },                
                   npc = { name="Melithar Staghelm" },
                   note="From Melithar Staghelm, Shadowglen."
@@ -58,7 +48,6 @@ QuestShellGuides["Test"] = {
                   title="Run to the Well",
                   coords={ x=60.2, y=42.6, map="Teldrassil" },
                   radius=0.35,
-                  level=1,
                   note="Head to the Moonwell north of the starting area."
                 },
 
@@ -67,7 +56,7 @@ QuestShellGuides["Test"] = {
                   type="ACCEPT", 
                   title="The Balance of Nature", 
                   questId=456,
-                  level=1,
+                  level=2,
                   coords={ x=58.7, y=44.4, map="Teldrassil" },                
                   npc = { name="Conservator Ilthalaine" },
                   note="From Conservator Ilthalaine, Shadowglen." 
@@ -110,7 +99,7 @@ QuestShellGuides["Test"] = {
                   title="The Woodland Protector", 
                   questId=111,
                   coords={ x=58.7, y=44.4, map="Teldrassil" },                
-                  level=2,
+                  level=1,
                   npc = { name="Melithar Staghelm" },
                   note="From Melithar Staghelm, Shadowglen."
                 },
