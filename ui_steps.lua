@@ -199,50 +199,17 @@ local function SetHeaderFromChapter()
 end
 
 -- ------------------------ Build visual rows for a single step ------------------------
+
+-- ------------------------ Build visual rows via central registry ------------------------
 local function BuildRows(step, fallbackTitle, forceComplete)
-    local rows, c = {}, 0
-    local stype = string.upper(step and step.type or "")
-
-    if stype == "ACCEPT" or stype == "TURNIN" then
-        local npc = step and step.npc
-        local who = (type(npc) == "table" and npc.name) or (type(npc) == "string" and npc) or "the quest giver"
-        c=c+1; rows[c] = { bullet=false, icon=TEX_TALK,   text=("Talk to "..who) }
-        c=c+1; rows[c] = { bullet=false, icon=(stype=="TURNIN" and TEX_TURNIN or TEX_ACCEPT), text=(step and step.title) or "" }
-
-    elseif stype == "TRAVEL" then
-        local note = (step and step.note) or "Travel to the marked location."
-        local cmeta = step and step.coords or {}
-        local where = ""
-        if cmeta and cmeta.x and cmeta.y then
-            local z = cmeta.map or ""
-            where = string.format("(%.1f, %.1f %s)", cmeta.x, cmeta.y, z)
-        end
-        c=c+1; rows[c] = { bullet=false, icon=TEX_RUN, text=note }
-        if where ~= "" then
-            c=c+1; rows[c] = { bullet=false, icon=nil, text=where }
-        end
-
-    elseif stype == "USE_ITEM" then
-        local nameTxt = step and (step.itemName or ("Item ID "..tostring(step.itemId or "?")))
-        local tar = (step and step.npc and step.npc.name) and (" with "..step.npc.name.." selected") or ""
-        local line = "Use: "..(nameTxt or "item")..tar
-        c=c+1; rows[c] = { bullet=false, icon=TEX_USE, text=line }
-
-    else
-        local note = (step and step.note) or (fallbackTitle or "")
-        c=c+1; rows[c] = { bullet=false, icon=nil, text=note }
-
-        local orows = QS_BuildObjectiveRows and QS_BuildObjectiveRows(step, forceComplete) or {}
-        local k = 1
-        while k <= table.getn(orows) do
-            local R = orows[k]; local kind = R.kind or "other"
-            local icon = (kind=="kill" and TEX_KILL) or (kind=="loot" and TEX_LOOT) or TEX_OTHER
-            c=c+1; rows[c] = { bullet=true, icon=icon, text=(R.text or ""), done=(R.done and true or false) }
-            k = k + 1
-        end
+    if QS_BuildVisualRows then
+        return QS_BuildVisualRows(step, fallbackTitle, forceComplete) or {}
     end
-    return rows
+    -- Fallback (shouldn't happen): simple one-liner
+    local note = (step and (step.note or step.title)) or (fallbackTitle or "")
+    return { { bullet=false, icon=nil, text=note } }
 end
+
 
 -- ------------------------ Render (absolute positioning) ------------------------
 local function RebuildContent(steps, currentIndex, completedMap)
