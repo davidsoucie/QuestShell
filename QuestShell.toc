@@ -6,6 +6,8 @@
 ## SavedVariables: QuestShellDB
 
 core_utils.lua
+core_debug.lua
+core_debug_commands.lua
 core_guides.lua
 core_gossip.lua
 core_stepviz.lua
@@ -20,5 +22,5 @@ ui_steps.lua
 ui_menu.lua
 ui_options.lua
 
-guide_alliance_1_20.lua
+guide_ne_1_60_teldrassil.lua
 guide_test.lua

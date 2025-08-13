@@ -11,7 +11,8 @@ QuestShellGuides["Test"] = {
     minLevel = 1,
     maxLevel = 10,
 
-    chapters = {
+    chapters = 
+    {    
         {
             id       = "Test",
             title    = "Test",
@@ -20,15 +21,15 @@ QuestShellGuides["Test"] = {
             maxLevel = 12,
 
             steps = {
-                -- The Woodland Protector (part 1)
+
+                                -- The Woodland Protector (part 1)
                 { 
                   type="ACCEPT", 
                   title="The Woodland Protector", 
                   questId=111,
                   coords={ x=58.7, y=44.4, map="Teldrassil" },                
-                  level=2,
                   npc = { name="Melithar Staghelm" },
-                  note="From Melithar Staghelm, Shadowglen." 
+                  note="From Melithar Staghelm, Shadowglen."
                 },
 
                 -- Travel example: arrive near a spot (radius defaults to 0.3)
@@ -80,7 +81,7 @@ QuestShellGuides["Test"] = {
                 { type="COMPLETE", title="The Balance of Nature", questId=457,
                   coords={ x=60.5, y=38.5, map="Teldrassil" },
                   note="Kill 7 Mangy Nightsaber and 7 Thistle Boar north of Shadowglen.",
-                  level=2,
+                  level=3,
                   objectives = {
                       { kind="kill", label="Mangy Nightsaber", target=7 },
                       { kind="kill", label="Thistle Boar", target=7 }                   

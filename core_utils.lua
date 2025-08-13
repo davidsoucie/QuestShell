@@ -6,7 +6,7 @@
 
 QuestShell = QuestShell or {}
 -- default guide on startup
-if QuestShell.activeGuide == nil then QuestShell.activeGuide = "Test" end
+if QuestShell.activeGuide == nil then QuestShell.activeGuide = "Night Elf 1-60" end
 if QuestShell.debug == nil then QuestShell.debug = true end
 
 function QS_Print(m) if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[QuestShell]|r "..tostring(m)) end end
@@ -41,6 +41,31 @@ function QS_EnsureDB()
         end
         if not st.currentStep then st.currentStep = 1 end
     end
+end
+
+local function QS__PlayerClass()
+  local _, c = UnitClass("player"); return string.upper(c or "")
+end
+
+function QS_StepIsEligible(step)
+  if not step then return true end
+  local me = QS__PlayerClass()
+
+  -- single string: class = "WARRIOR"
+  if step.class and type(step.class) == "string" then
+    return string.upper(step.class) == me
+  end
+
+  -- list: classes = {"WARRIOR","PALADIN"}
+  if step.classes and type(step.classes) == "table" then
+    local i=1; while step.classes[i] do
+      if string.upper(step.classes[i]) == me then return true end
+      i=i+1
+    end
+    return false
+  end
+
+  return true
 end
 
 -- --- Bag / Item helpers (Lua 5.0 safe) --------------------

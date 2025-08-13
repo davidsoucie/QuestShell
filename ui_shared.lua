@@ -79,9 +79,11 @@ function QS_UI_SetStepCompleted(index, completed)
     while i <= n do if set[i] then out[table.getn(out)+1] = i end i = i + 1 end
     st.completedByChapter[ch] = out
 
-    -- first not-completed becomes current
+    -- first not-completed AND eligible becomes current
     local cur = 1
-    while cur <= n and set[cur] do cur = cur + 1 end
+    while cur <= n and (set[cur] or (QS_StepIsEligible and not QS_StepIsEligible(steps[cur]))) do
+        cur = cur + 1
+    end
     st.currentStep = cur
 
     if QuestShellUI.UpdateList then QuestShellUI.UpdateList(steps, st.currentStep, set) end
