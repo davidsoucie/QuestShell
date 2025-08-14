@@ -16,7 +16,9 @@ TourGuide to QuestShell Converter (with conflict summary)
 - Skip [[ and ]] lines even with trailing comments
 - README includes detailed issues; writes *_issues.json
 - Writes *_mappings.json (questId->title, itemId->name)
-- NEW: logs duplicate item IDs with different names and writes *_conflicts.json
+- Logs duplicate item IDs with different names and writes *_conflicts.json
+- Class restriction is emitted UPPERCASE (e.g., DRUID, WARRIOR)
+- Race restriction is emitted UPPERCASE (e.g., NIGHT ELF, TAUREN/ORC)
 """
 
 import re, os, sys, json
@@ -233,8 +235,8 @@ class TourGuideConverter:
 
     def extract_special_codes(self, line:str)->Dict[str,Any]:
         c={}
-        m=re.search(r'\|C\|([A-Z][A-Za-z]+)\|',line);   c['class']=m.group(1) if m else None
-        m=re.search(r'\|R\|([A-Za-z\s/]+)\|',line);     c['race']=m.group(1).strip() if m else None
+        m=re.search(r'\|C\|([A-Z][A-Za-z]+)\|',line);   c['class']=m.group(1).upper() if m else None  # UPPERCASE class
+        m=re.search(r'\|R\|([A-Za-z\s/]+)\|',line);     c['race']=m.group(1).strip().upper() if m else None  # UPPERCASE race
         m=re.search(r'\|Z\|([A-Za-z\s\'-]+)\|',line);   c['zone']=m.group(1).strip() if m else None
         c['optional']='|O|' in line
         m=re.search(r'\|PRE\|(\d+)\|',line);            c['prerequisite']=int(m.group(1)) if m else None
@@ -381,13 +383,18 @@ class TourGuideConverter:
     def convert_travel_step(self, line, ln):
         m=re.match(r'^R\s+(.+?)\s+(?:\|QID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
         if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse TRAVEL",line,"medium"); return None
-        title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s) if qid_s else None; codes=self.extract_special_codes(line)
+        title,qid_s,note=m.groups()
+        qid=self.parse_quest_id(qid_s) if qid_s else None
+        codes=self.extract_special_codes(line)
         if qid: self.found_quest_ids.add(qid)
         note=self.normalize_common_typos(note)
         map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
         coords=self.coords_obj(self.extract_all_coords(note), map_name)
         if map_name: self.found_zones.add(map_name)
-        return QuestStep("TRAVEL", self.clean_title(title), qid, coords, None, note, optional=codes.get('optional',False), prerequisite=codes.get('prerequisite'), line_num=ln)
+        return QuestStep("TRAVEL", self.clean_title(title), qid, coords, None, note,
+                         optional=codes.get('optional',False), prerequisite=codes.get('prerequisite'),
+                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
+                         line_num=ln)
 
     def convert_fly_step(self, line, ln):
         m=re.match(r'^F\s+(.+?)\s+\|N\|(.+?)\|', line)
@@ -410,7 +417,9 @@ class TourGuideConverter:
         note=self.normalize_common_typos(note)
         coords=self.coords_obj(self.extract_all_coords(note), codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note))
         npc=self.extract_npc(note)
-        st=QuestStep("FLIGHTPATH", self.clean_title(title), None, coords, {"name":npc} if npc else None, note, line_num=ln)
+        st=QuestStep("FLIGHTPATH", self.clean_title(title), None, coords, {"name":npc} if npc else None, note,
+                     class_restriction=codes.get('class'), race_restriction=codes.get('race'),
+                     line_num=ln)
         if tid and tid.strip().isdigit(): st.item_id=int(tid)
         return st
 
@@ -418,10 +427,13 @@ class TourGuideConverter:
         m=re.match(r'^h\s+(.+?)\s+(?:\|QID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
         if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse HEARTH",line,"medium"); return None
         title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s) if qid_s else None
+        codes=self.extract_special_codes(line)
         note=self.normalize_common_typos(note)
         coords=self.coords_obj(self.extract_all_coords(note), self.extract_map_from_text(line) or self.extract_map_from_text(note))
         npc=self.extract_npc(note)
-        return QuestStep("SET_HEARTH", self.clean_title(title), qid, coords, {"name":npc} if npc else None, note, line_num=ln)
+        return QuestStep("SET_HEARTH", self.clean_title(title), qid, coords, {"name":npc} if npc else None, note,
+                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
+                         line_num=ln)
 
     def convert_note_step(self, line, ln):
         m=re.match(r'^N\s+(.+?)\s+\|N\|(.+?)\|', line)
@@ -442,7 +454,10 @@ class TourGuideConverter:
         if item_id:
             self.found_item_ids.add(item_id)
             self._record_item_mapping(item_id, item_name.strip(), ln, line, "buy")
-        return QuestStep("BUY", f"Buy {item_name.strip()}", qid, coords, {"name":npc} if npc else None, note, item_id=item_id, item_name=item_name.strip(), line_num=ln)
+        return QuestStep("BUY", f"Buy {item_name.strip()}", qid, coords, {"name":npc} if npc else None, note,
+                         item_id=item_id, item_name=item_name.strip(),
+                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
+                         line_num=ln)
 
     def convert_kill_step(self, line, ln):
         m=re.match(r'^K\s+(.+?)\s+(?:\|QID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
@@ -553,7 +568,8 @@ class TourGuideConverter:
 
     def convert_line(self, line:str, ln:int)->Optional[QuestStep]:
         raw=line.strip()
-        if (not raw or raw.startswith('--') or raw.startswith('TourGuide') or raw.startswith('return') or raw.startswith('[[') or raw.startswith(']]') or raw in ['[[',']]'] or raw=='end)'):
+        if (not raw or raw.startswith('--') or raw.startswith('TourGuide') or raw.startswith('return')
+            or raw.startswith('[[') or raw.startswith(']]') or raw in ['[[',']]'] or raw=='end)'):
             self.stats['skipped_lines']+=1; return None
         t=raw[0]
         try:
@@ -606,7 +622,7 @@ class TourGuideConverter:
                 target=obj.get("target",1)
                 out+=f'{indent}        {{ kind="{kind}", label="{label}", target={target}'
                 if obj.get('itemId'): out+=f', itemId={obj["itemId"]}'
-                if obj.get('coords'): c=obj['coords']; out+=f', coords={{ x={c["x"]}, y={c["y"]} }}'
+                if obj.get('coords'): c2=obj['coords']; out+=f', coords={{ x={c2["x"]}, y={c2["y"]} }}'
                 if obj.get('note'): out+=f', note="{self._lua_escape(obj["note"])}"'
                 out+=' }'
                 if i < len(step.objectives)-1: out+=','
@@ -627,7 +643,7 @@ class TourGuideConverter:
 -- Converted from TourGuide format on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 -- =========================
 
-QuestShellGuides = QuestShellGuides or {{}}
+QuestShellGuides = QuestShellGuides or {{}} 
 
 QuestShellGuides["{name}"] = {{
     title    = "{name}",
@@ -647,9 +663,9 @@ QuestShellGuides["{name}"] = {{
 
 """
         body="".join(self.format_step_to_lua(s, i==len(steps)-1) for i,s in enumerate(steps))
-        footer="""            }},
-        }}
-    }},
+        footer="""            },
+        }
+    },
 }"""
         return header+body+footer
 
@@ -709,7 +725,8 @@ QuestShellGuides["{name}"] = {{
         steps=[]; loot_lines=[]; quest_titles={}
         for ln,line in enumerate(lines,1):
             raw=line.strip()
-            if (not raw or raw.startswith('--') or raw.startswith('TourGuide') or raw.startswith('return') or raw.startswith('[[') or raw.startswith(']]') or raw in ['[[',']]'] or raw=='end)'):
+            if (not raw or raw.startswith('--') or raw.startswith('TourGuide') or raw.startswith('return')
+                or raw.startswith('[[') or raw.startswith(']]') or raw in ['[[',']]'] or raw=='end)'):
                 self.stats['skipped_lines']+=1
                 continue
             if raw.startswith('L '):
