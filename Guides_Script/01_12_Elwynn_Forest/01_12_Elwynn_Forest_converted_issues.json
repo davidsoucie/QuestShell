@@ -1,0 +1,233 @@
+[
+  {
+    "line_number": 13,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Wolves Across the Border |QID|33| |N|Kill Young Wolf and Timber Wolf to collect 8 pieces of Tough Wolf Meat (47, 38) (46, 35)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 35,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C The Stolen Tome |QID|1598| |N|Collect Powers of the Void from the ground near the tent in Northshire Valley (56.70, 44.01)| |C|Warlock|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 51,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Milly's Harvest |QID|3904| |N|Clear the area around each crate of Northshire Vineyardsto collect 8 of Milly's Harvest (55, 47)| |OBJ|3012|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 52,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Bounty on Garrick Padfoot |QID|6| |N|Find and kill Garrick Padfoot and collect Garrick's Head. He is surrounded by two guards but both can easily be pulled seperately in Northshire Vineyards (57, 48)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 67,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for TURNIN",
+    "original_line": "T Report to Goldshire |QID|54| |N| Marshal Dughan in Goldshire (42.14, 65.90)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 69,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for ACCEPT",
+    "original_line": "A Gold Dust Exchange |QID|47| |N|Remy \\Two Times\\ in Goldshire (42.19, 67.05)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 75,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for ACCEPT",
+    "original_line": "A Lost Necklace |QID|85| |N|\\Auntie\\ Bernice Stonefield in The Stonefield Farm (34.5, 84.3)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 82,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Pie for Billy |QID|86| |N|Kill any of the boars surrounding Elywnn Forest to collect 4 Chunk of Boar Meat. Rockhide Boar are easily found around to the south of Goldshire (47, 81)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 85,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for TURNIN",
+    "original_line": "T Pie for Billy |QID|86| |N|\\Auntie\\ Bernice Stonefield in The Stonefield Farm (34.5, 84.3)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 86,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for ACCEPT",
+    "original_line": "A Back to Billy |QID|84| |N|\\Auntie\\ Bernice Stonefield in The Stonefield Farm (34.5, 84.3)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 98,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Goldtooth |QID|87| |N|Kill Goldtooth and get Bernice's Necklace in Fargodeep Mine (41.6, 78.8)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 99,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C The Fargodeep Mine |QID|62| |N|Travel inside The in Fargodeep Mine at to have it investigated (40.60, 81.92)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 100,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Gold Dust Exchange |QID|47| |N|Kill the Kobolds surrounding the Fargodeep Mineto collect 10 Gold Dust (39, 80)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 101,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Kobold Candles |QID|60| |N|Kill the Kobolds surrounding the in Fargodeep Mine to collect 8 Large Candle (39, 80)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 104,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for TURNIN",
+    "original_line": "T Gold Dust Exchange |QID|47| |N|Remy \\Two Times\\ in Goldshire (42.19, 67.05)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 105,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for ACCEPT",
+    "original_line": "A A Fishy Peril |QID|40| |N|Remy \\Two Times\\ in Goldshire (42.19, 67.05)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 106,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for TURNIN",
+    "original_line": "T A Fishy Peril |QID|40| |N| Marshal Dughan in Goldshire (42.14, 65.90)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 121,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C The Jasperlode Mine |QID|76| |N|Scout through the Jasperlode Mine (60.45, 50.35)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 143,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Red Linen Goods |QID|83| |N|Kill the Defias Bandit in the area to collect 6 Red Linen Bandana (90.09, 80.19) (69.99, 80.31)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 167,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for TURNIN",
+    "original_line": "T Goldtooth |QID|87| |N|\\Auntie\\ Bernice Stonefield in The Stonefield Farm (34.5, 84.3)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 190,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Poor Old Blanchy |QID|151| |N|Start collecting Handful of Oats from Sack of Oats on the ground in Saldean's Farm. Try to get 3-4 Handful of Oats and tick this step to complete later (56.9, 19,3)| |Z|Westfall| |L|1528 4|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 209,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Surena Caledon |QID|1688| |N|Kill Surena Caledon and collect Surena's Choker in Brackwell Pumpkin Patch. She is guarded by 2 other enemies, you will need to pull them away (71.02, 80.76)| |C|Warlock|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 215,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for TURNIN",
+    "original_line": "T Bartleby the Drunk |QID|1639| |N|in Old Town (73.79, 36.31)| |C|Warrior| |Z|Stormwind City|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 217,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Beat Bartleby |QID|1640| |N|Beat Bartleby, then talk to him in Old Town (73.79, 36.31)| |C|Warrior| |Z|Stormwind City|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 224,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Snatch and Grab |QID|2206| |N|Find the Defias Dockmaster use (spell:921) to get Defias Shipping Schedule in Jerod's Landing (48.08, 87.30)| |C|Rogue|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 230,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C The Binding |QID|1689| |N|Keep going down the stair until you find the purple summoning circle and use Bloodstone Choker to summon and kill a Summoned Voidwalker in The Slaughtered Lamb (25.06, 79.28) (25.19, 77.33)| |C|Warlock| |Z|Stormwind City|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 238,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Wanted: \"Hogger\" |QID|176| |N|Kill Hogger and collect Huge Gnoll Claw in Forest's Edge. This is a group quest and safe to skip (26.14, 94.34)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 251,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Manhunt |QID|147| |N|Kill Morgan the Collector in Brackwell Pumpkin Patch, you will need to pull the enemies around her first otherwise it is difficult to solo (71.01, 80.55)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 252,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Princess Must Die! |QID|88| |N|Kill Princess who patrols the area and loot the Brass Collar. She is a level 9 mob who is surrounded by two guards which are level 7 so grouping with another is recommended, you can skip it if you're unable to complete (69, 78)|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 263,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Dead-tooth Jack |QID|1667| |N|Collect Marshal Haggard's Badge from Dead-tooth Lockbox in Ridgepoint Tower (89.36, 78.85)| |C|Warrior| |OBJ|318|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 315,
+    "issue_type": "MISSING_NPC",
+    "description": "No NPC for ACCEPT",
+    "original_line": "A Thelsamar Blood Sausages |QID|418| |N|in Stoutlager Inn (34.88, 49.13)| |Z|Loch Modan|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 326,
+    "issue_type": "MISSING_OBJECTIVES",
+    "description": "No objectives parsed",
+    "original_line": "C Thelsamar Blood Sausages |QID|418| |N|Kill any Bears, Spiders and Boars for 3 Boar Intestines, 3 Bear Meat and 3 Spider Ichor (32.42, 29.97) (37.28, 36.91) (27.30, 28.24)| |Z|Loch Modan|",
+    "severity": "medium"
+  },
+  {
+    "line_number": 330,
+    "issue_type": "PARSE_ERROR",
+    "description": "Could not parse TURNIN",
+    "original_line": "T A Rat Catching|QID|416| |N|Mountaineer Kadrell in Thelsamar, he patrols (32.91, 49.53)| |Z|Loch Modan|",
+    "severity": "high"
+  }
+]
