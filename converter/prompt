@@ -1,0 +1,124 @@
+## 📋 **Complete TourGuide to QuestShell Converter Summary**
+
+### **🎯 Project Goal**
+Convert 40 TourGuide format `.lua` files to QuestShell format for Turtle WoW (client 1.12) leveling addon.
+
+### **📁 File Formats**
+
+**TourGuide Format:**
+```lua
+A The Balance of Nature (Part 1) |QID|456| |N|Conservator Ilthalaine in Shadowglen (58.69, 44.35)|
+C The Balance of Nature (Part 1) |QID|456| |N|Kill 7 Young Nightsaber and 4 Young Thistle Boar in Shadowglen (61, 43)|
+L 8 Fel Moss |QID|459| |N|Kill Grell located in Shadowglen and collect 8 Fel Moss (56, 45.9)| |L|5168 8|
+T The Balance of Nature (Part 1) |QID|456| |N|Conservator Ilthalaine in Shadowglen (58.69, 44.35)|
+```
+
+**QuestShell Target Format:**
+```lua
+{
+    type="ACCEPT",
+    title="The Balance of Nature",  -- (Part 1) stripped
+    questId=456,
+    coords={ x=58.69, y=44.35, map="Shadowglen" },
+    npc = { name="Conservator Ilthalaine" },
+    objectives = {
+        { kind="loot", label="Fel Moss", target=8, itemId=5168, coords={...} }
+    },
+    note="..."
+}
+```
+
+### **🔧 Step Types & Mapping**
+- `A` → `type="ACCEPT"` (needs NPC, coords, questId)
+- `C` → `type="COMPLETE"` (needs objectives, coords)
+- `T` → `type="TURNIN"` (needs NPC, coords, questId)
+- `R` → `type="TRAVEL"` (needs coords)
+- `F` → `type="FLY"` (needs NPC, coords, destination)
+- `h` → `type="SET_HEARTH"` (needs NPC, coords)
+- `N` → `type="Note"` (informational)
+- `L` → Becomes objectives in COMPLETE steps
+
+### **⚠️ Current Issues Identified**
+
+#### **1. Title Cleaning (NEW)**
+- **Problem**: Titles have `(Part 1)`, `(Part 2)`, etc.
+- **Need**: Strip all `(Part X)` from titles
+- **Example**: `"The Balance of Nature (Part 1)"` → `"The Balance of Nature"`
+
+#### **2. Loot vs Kill Detection (NEW)**
+- **Problem**: Fel Moss detected as kill instead of loot
+- **Line**: `L 8 Fel Moss |QID|459| |N|Kill Grell located in Shadowglen and collect 8 Fel Moss`
+- **Issue**: "Kill" in note makes it think it's kill objective, but it should be loot
+- **Need**: Better logic - if note says "collect X item", it's loot regardless of "kill" mention
+
+#### **3. L Line Grouping Logic (NEW)**
+- **Current**: Groups all L lines with same base quest ID
+- **Need**: Only group **consecutive** L lines with same base quest ID
+- **Example**: If L lines for quest 488 are separated by other steps, don't group them
+
+#### **4. Fixed Issues ✅**
+- Kill label extraction (no more "in Shadowglen" in labels)
+- NPC extraction patterns improved
+- Quest ID parsing (488.1 → 488)
+- Error handling (KeyError, missing fields)
+- Regex syntax errors fixed
+
+### **📊 Processing Logic**
+
+#### **Current Flow:**
+1. **First Pass**: Convert A,C,T,R,F,h,N steps, collect L lines separately
+2. **Track**: Quest titles from ACCEPT steps (quest_id → title mapping)
+3. **Second Pass**: Group L lines by base quest ID, create COMPLETE steps
+4. **Insert**: COMPLETE steps after corresponding ACCEPT steps
+
+#### **Special Code Handling:**
+- `|C|Hunter|` → `class="HUNTER"`
+- `|Z|Darnassus|` → Zone info
+- `|U|5185|` → `use_item` objective with itemId
+- `|L|5168 8|` → itemId and amount for loot
+- `|O|` → `optional=true`
+- `|PRE|2241|` → `prerequisite=2241`
+
+### **🔍 Data Extraction Patterns**
+
+#### **Coordinates:** `(58.69, 44.35)` → `{x=58.69, y=44.35}`
+#### **Maps:** `"in Shadowglen"` → `map="Shadowglen"`
+#### **NPCs:** Multiple patterns:
+- `"Name in Location"`
+- `"Name north/south/east/west"`
+- `"Name (coords)"`
+- `"Speak to Name and"`
+
+#### **Objectives:**
+- **Kill**: `"Kill 7 Young Nightsaber"` → `{kind="kill", label="Young Nightsaber", target=7}`
+- **Loot**: `"Collect 8 Fel Moss"` → `{kind="loot", label="Fel Moss", target=8}`
+- **Use**: `|U|5185|` → `{kind="use_item", itemId=5185}`
+
+### **📁 File Structure**
+- **Input**: `filename.lua` (TourGuide format)
+- **Output**: `filename_converted.lua` (QuestShell format)
+- **Report**: `filename_README.md` (issues, statistics, item IDs found)
+
+### **🛠️ Tools Created**
+1. **`tourguide_converter.py`** - Main converter logic
+2. **`gui_converter.py`** - GUI interface (needs tkinter fix on Mac)
+3. **`cli_converter.py`** - Command line version (tkinter-free)
+
+### **🎯 Remaining Tasks**
+1. **Strip `(Part X)` from all titles**
+2. **Fix loot vs kill detection** (prioritize "collect" over "kill" in notes)
+3. **Change L line grouping** to only consecutive lines with same base quest ID
+4. **Test on all 40 files**
+5. **Create item name lookup table** from discovered item IDs
+
+### **💻 Usage**
+```bash
+# GUI (if tkinter works)
+python3 gui_converter.py
+
+# Command line
+python3 cli_converter.py
+
+# Batch all files
+python3 tourguide_converter.py --batch /path/to/files/
+```

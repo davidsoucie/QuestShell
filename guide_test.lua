@@ -1,9 +1,3 @@
--- =========================
--- guide_test.lua
--- Small “Test” guide to exercise all step types including TRAVEL and USE_ITEM.
--- Keep titles/levels consistent with in-game data for best auto-matching.
--- =========================
-
 QuestShellGuides = QuestShellGuides or {}
 
 QuestShellGuides["Test"] = {
@@ -86,7 +80,16 @@ QuestShellGuides["Test"] = {
                       { kind="kill", label="Mangy Nightsaber", target=7 },
                       { kind="kill", label="Thistle Boar", target=7 }                   
                   }  
-                },              
+                },    
+                
+                {
+                    type="SET_HEARTH",
+                    title="Astranaar",
+                    questId=929,
+                    coords={ x=36.6, y=49.3, map="Astranaar" },
+                    npc = { name="Innkeeper Kimlya" },
+                    note="Speak to Innkeeper Kimlya and set hearth in Astranaar (36.6, 59.8)"
+                },
 
                 -- USE_ITEM example: Hearthstone (no target required)
                 {
