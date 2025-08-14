@@ -91,13 +91,26 @@ QuestShellGuides["Test"] = {
                     note="Speak to Innkeeper Kimlya and set hearth in Astranaar (36.6, 59.8)"
                 },
 
-                -- USE_ITEM example: Hearthstone (no target required)
                 {
-                  type="USE_ITEM",
-                  title="Hearth back to Shadowglen",
-                  itemId=6948,                 -- Hearthstone
-                  itemName="Hearthstone",      -- UI label
-                  note="Use your Hearthstone."
+                    type="COMPLETE",
+                    title="Hearth back to Shadowglen",
+                    questId=921,
+                    coords={ x=59.9, y=33.1, map="Shadowglen" },
+                    objectives = {
+                        { kind="use_item", label="Hearthstone", itemId=6948 }
+                    },
+                    note="Use your Hearthstone"
+                },
+
+                {
+                    type="COMPLETE",
+                    title="Hearth back to Shadowgle Test",
+                    questId=921,
+                    coords={ x=59.9, y=33.1, map="Shadowglen" },
+                    objectives = {
+                        { kind="use_item", label="Hearthstone"}
+                    },
+                    note="Use your Hearthstone Test"
                 },
 
                 -- USE_ITEM with target requirement example (imaginary item)
