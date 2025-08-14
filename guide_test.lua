@@ -113,6 +113,15 @@ QuestShellGuides["Test"] = {
                     note="Use your Hearthstone Test"
                 },
 
+                {
+                    type="COMPLETE",
+                    title="Eat some food",
+                    objectives = {
+                        { kind="use_item", label="Tough Jerky"}
+                    },
+                    note="Eat some jerky !"
+                },
+
                 -- USE_ITEM with target requirement example (imaginary item)
                 {
                   type="USE_ITEM",

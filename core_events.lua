@@ -278,6 +278,86 @@ local function QS__FindNextEligibleIncomplete(steps, completedSet, fromIndex)
     return n + 1 -- sentinel: past the end
 end
 
+-- Find the item we should consider as "use-item" for this step (id and/or name)
+local function QS__UseItemSpecForStep(step)
+    if not step then return nil, nil end
+    local stype = string.upper(step.type or "")
+
+    -- Pure USE_ITEM steps
+    if stype == "USE_ITEM" then
+        return step.itemId, step.itemName
+    end
+
+    -- COMPLETE steps with objectives including { kind="use_item", ... }
+    if stype == "COMPLETE" and step.objectives and type(step.objectives) == "table" then
+        local i = 1
+        while step.objectives[i] do
+            local o = step.objectives[i]
+            if o and string.lower(o.kind or "") == "use_item" then
+                -- Prefer ID, but fallback to label (item name)
+                return o.itemId, (o.label or step.itemName)
+            end
+            i = i + 1
+        end
+    end
+    return nil, nil
+end
+
+-- Lua 5.0-safe bag finder by ID or Name; prefers ID when available
+local function QS__FindItemInBags_ByIdOrName(id, name)
+    if QS_FindItemInBags and id then
+        local b, s = QS_FindItemInBags(id)
+        if b and s then return b, s end
+    end
+    if not name or name == "" then return nil, nil end
+
+    -- fallback name search (Lua 5.0: use string.find with capture)
+    if GetContainerNumSlots and GetContainerItemLink then
+        for bag = 0, 4 do
+            local slots = GetContainerNumSlots(bag)
+            if slots and slots > 0 then
+                for slot = 1, slots do
+                    local link = GetContainerItemLink(bag, slot)
+                    if link then
+                        local _, _, nm = string.find(link, "%[(.+)%]")  -- capture text between [...]
+                        if nm and string.lower(nm) == string.lower(name) then
+                            return bag, slot
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+-- Count items by id or (fallback) name
+local function QS__CountItemInBags_ByIdOrName(id, name)
+    if QS_CountItemInBags and id then
+        return QS_CountItemInBags(id) or 0
+    end
+    if not name or name == "" then return 0 end
+    local total = 0
+    if GetContainerNumSlots and GetContainerItemLink and GetContainerItemInfo then
+        for bag = 0, 4 do
+            local slots = GetContainerNumSlots(bag)
+            if slots and slots > 0 then
+                for slot = 1, slots do
+                    local link = GetContainerItemLink(bag, slot)
+                    if link then
+                        local _, _, nm = string.find(link, "%[(.+)%]")
+                        if nm and string.lower(nm) == string.lower(name) then
+                            local tex, itemName, count = GetContainerItemInfo(bag, slot)
+                            total = total + (count or 1)
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return total
+end
+
 -- ------------------------------------------------------------
 -- Step advancement that skips steps already checked
 -- ------------------------------------------------------------
@@ -311,7 +391,12 @@ function QS_AdvanceStep(markCurrentComplete)
 
     -- clear transient trackers
     if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
-    if itemTrack then itemTrack.itemId, itemTrack.prevCount, itemTrack.lastChangeTime = nil, nil, 0 end
+    if itemTrack then
+        itemTrack.itemId = nil
+        itemTrack.itemName = nil
+        itemTrack.prevCount = nil
+        itemTrack.lastChangeTime = 0
+    end
 
     -- find next eligible, incomplete step AFTER current (class-gated aware)
     local nextIdx = QS__FindNextEligibleIncomplete and QS__FindNextEligibleIncomplete(steps, set, cur) or (cur + 1)
@@ -460,24 +545,24 @@ local function QS__UseItemSatisfied(step)
         end
     end
 
-    -- two ways to detect:
-    --  (1) item enters cooldown soon after a bag cooldown update
-    --  (2) stack/count decreases
-    local id = step.itemId
-    if not id then return false end
+    -- Accept both USE_ITEM steps and COMPLETE steps with use_item objectives
+    local id, name = QS__UseItemSpecForStep(step)
+    if (not id) and (not name) then return false end
 
-    -- detect cooldown starting
-    local bag, slot = QS_FindItemInBags and QS_FindItemInBags(id)
-    if bag and slot then
+    -- (1) detect cooldown starting on the bag slot we found
+    local bag, slot = QS__FindItemInBags_ByIdOrName(id, name)
+    if bag and slot and GetContainerItemCooldown then
         local start, duration, enable = GetContainerItemCooldown(bag, slot)
         if enable and duration and duration > 1 and start and start > 0 then
             return true
         end
     end
 
-    -- detect count drop (BAG_UPDATE sets lastChangeTime)
-    if itemTrack.itemId == id and itemTrack.lastChangeTime and (Now() - itemTrack.lastChangeTime) <= 2.0 then
-        return true
+    -- (2) detect a count drop near the last BAG_UPDATE
+    if (itemTrack.itemId == id and id) or (itemTrack.itemName and name and string.lower(itemTrack.itemName) == string.lower(name)) then
+        if itemTrack.lastChangeTime and (Now() - itemTrack.lastChangeTime) <= 2.0 then
+            return true
+        end
     end
 
     return false
@@ -591,20 +676,31 @@ ev:SetScript("OnEvent", function()
 
     elseif event == "BAG_UPDATE" then
         local step = QS_CurrentStep and QS_CurrentStep() or nil
-        if step and string.upper(step.type or "") == "USE_ITEM" and step.itemId and QS_CountItemInBags then
-            local cur = QS_CountItemInBags(step.itemId)
-            if itemTrack.prevCount ~= nil and cur ~= itemTrack.prevCount then
+        if not step then return end
+
+        -- Track if the current step wants a use-item (by id or name)
+        local id, name = QS__UseItemSpecForStep(step)
+        if id or name then
+            local curCount = QS__CountItemInBags_ByIdOrName(id, name)
+            if itemTrack.prevCount ~= nil and curCount ~= itemTrack.prevCount then
                 itemTrack.lastChangeTime = Now()
             end
-            itemTrack.prevCount = cur
+            itemTrack.prevCount = curCount
+            itemTrack.itemId = id or nil
+            itemTrack.itemName = name or nil
         end
         return
 
+
     elseif event == "BAG_UPDATE_COOLDOWN" then
         local step = QS_CurrentStep and QS_CurrentStep() or nil
-        if step and string.upper(step.type or "") == "USE_ITEM" then
+        if not step then return end
+
+        -- Advance if the step’s use-item condition was satisfied
+        local id, name = QS__UseItemSpecForStep(step)
+        if id or name then
             if QS__UseItemSatisfied(step) then
-                if QS_D then QS_D("USE_ITEM satisfied; advancing step.") end
+                if QS_D then QS_D("USE_ITEM satisfied (any step); advancing step.") end
                 QS__CompleteCurrentStep()
             end
         end
