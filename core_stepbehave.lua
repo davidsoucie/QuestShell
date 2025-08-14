@@ -150,30 +150,70 @@ QS_RegisterStepBehavior("USE_ITEM", {
 })
 
 -- SET_HEARTH: auto-confirm binder (optional) and complete when bind location changes
+-- SET_HEARTH: auto-confirm (optional), then wait a few seconds for the bind
+-- to actually change. Only checks during that short window.
 QS_RegisterStepBehavior("SET_HEARTH", {
     waypoint = function(step)
         if _hasCoords(step) then
             return { map=step.coords.map, x=step.coords.x, y=step.coords.y, title=step.title }
         end
     end,
+
     onEnter = function(step, state)
-        state.oldBind = (GetBindLocation and GetBindLocation()) or ""
-        state.autoConfirm = (step and step.autoconfirm ~= false) and true or false
+        state = state or {}
+        state.oldBind      = (GetBindLocation and GetBindLocation()) or ""
+        state.awaitingBind = false
+        state.selectedAt   = nil
+        state.confirmedAt  = nil
+        state.timeoutSec   = 6.0   -- how long we wait for the bind to actually change
+        state.autoConfirm  = (step and step.autoconfirm ~= false)
     end,
+
     onEvent = function(step, event, args, state)
+    -- Advance immediately after we confirm the binder
         if event == "CONFIRM_BINDER" then
-            if state and state.autoConfirm and ConfirmBinder then
+            if state and (step and step.autoconfirm ~= false) and ConfirmBinder then
+                if QS_D then QS_D("SET_HEARTH: auto-confirming binder (advancing now).") end
                 ConfirmBinder()
-                return { handled = true }
+                -- clean up any lingering UI
+                if StaticPopup_Hide then StaticPopup_Hide("CONFIRM_BINDER") end
+                if CloseGossip then CloseGossip() end
+                -- prevent re-trigger if CONFIRM_BINDER fires again
+                state._hearthDone = true
+                return { advance = true, handled = true }
             end
         end
         return nil
     end,
+
     onUpdate = function(step, ctx, state)
+        state = state or {}
+        local now = (GetTime and GetTime()) or 0
+
+        -- Only look for a bind change within a short window after we selected/confirmed
+        if not state.awaitingBind or not state.selectedAt then
+            return nil
+        end
+
         local cur = (GetBindLocation and GetBindLocation()) or ""
-        if state and state.oldBind and cur ~= "" and cur ~= state.oldBind then
+        if cur ~= "" and cur ~= (state.oldBind or "") then
+            if QS_Print then QS_Print("SET_HEARTH: bind changed to '"..cur.."', advancing.") end
+            -- safety: make sure the popup is gone
+            if StaticPopup_Hide then StaticPopup_Hide("CONFIRM_BINDER") end
+            state.awaitingBind, state.selectedAt = false, nil
             return { advance = true }
         end
+
+        -- Timeout if the server never changed our bind (e.g. wrong click or lag)
+        if (now - state.selectedAt) >= (state.timeoutSec or 6.0) then
+            state.awaitingBind, state.selectedAt = false, nil
+            if QS_Print then QS_Print("SET_HEARTH: timeout waiting for bind change.") end
+            -- do not advance
+            return { handled = true }
+        end
+
         return nil
     end
 })
+
+

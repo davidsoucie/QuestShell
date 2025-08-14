@@ -617,6 +617,44 @@ ev:SetScript("OnEvent", function()
             return
         end
 
+            -- Auto-select "Make this inn your home" only for SET_HEARTH and correct NPC
+        if step and string.upper(step.type or "") == "SET_HEARTH" then
+            -- guard: only the intended NPC
+            if not QS_ShouldAutoHandleNpcForStep(step) then
+                if QS_D then QS_D("SET_HEARTH gossip on other NPC; ignoring.") end
+                return
+            end
+
+            -- parse gossip options safely (1.12: text,type repeating)
+            local opts = { GetGossipOptions() }
+            local foundIdx = nil
+            for i = 1, table.getn(opts), 2 do
+                local txt = string.lower(tostring(opts[i] or ""))
+                -- a few robust phrases; you can expand/localize later
+                if string.find(txt, "make this inn your home", 1, true)
+                or string.find(txt, "set.*hearth", 1)  -- catches "set your hearthstone"
+                or string.find(txt, "make .* your home", 1) then
+                    foundIdx = (i + 1) / 2
+                    break
+                end
+            end
+
+            if foundIdx then
+                -- mark ephemeral state for behavior (read via _StateFor)
+                local st  = QS_GuideState and QS_GuideState() or {}
+                local idx = st and st.currentStep or 1
+                local state = _StateFor(idx)
+                state.awaitingBind   = true
+                state.selectedAt     = Now()
+                state.confirmedAt    = nil
+                state.oldBind        = (GetBindLocation and GetBindLocation()) or ""
+
+                if QS_D then QS_D("Selected inn binder gossip option.") end
+                SelectGossipOption(foundIdx)
+                return
+            end
+        end
+
         -- bridge gossip -> greeting when possible
         if step and (step.type == "ACCEPT" or step.type == "TURNIN") then
             if TryOpenGreetingFromGossip and TryOpenGreetingFromGossip() then
@@ -839,6 +877,21 @@ ev:SetScript("OnEvent", function()
         -- IMPORTANT: Do NOT run any passive ACCEPT scan here.
         if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
         return
+    
+    elseif event == "CONFIRM_BINDER" then
+    -- Auto-confirm the hearth bind only for SET_HEARTH steps
+    local step = QS_CurrentStep and QS_CurrentStep() or nil
+    if step and string.upper(step.type or "") == "SET_HEARTH" then
+        if step.autoconfirm == false then
+            if QS_D then QS_D("CONFIRM_BINDER: autoconfirm disabled for this step.") end
+            return
+        end
+        if QS_D then QS_D("CONFIRM_BINDER: confirming and advancing.") end
+        ConfirmBinder()          -- click “Accept”
+        --if QS_AdvanceStep then QS_AdvanceStep() end
+    end
+    return
+
     end
 end)
 
