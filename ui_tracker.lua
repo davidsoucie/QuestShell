@@ -46,6 +46,10 @@ local tracker, header, headerStepFS, chk
 local content, rowPool
 local baseHeaderSize, baseRowSize = nil, nil
 
+-- Mini Use-Item button (new)
+local mini, miniIcon, miniCD, miniCountFS
+local _miniLastItemId, _miniLastItemName, _miniNextPoll = nil, nil, 0
+
 local function ContentWidth()
     return (content and content:GetWidth() or 320)
 end
@@ -261,6 +265,208 @@ function UpdateHeaderStep()
     headerStepFS:SetText("Step "..tostring(cur))
 end
 
+-- ------------------------- Mini Use-Item button -------------------------
+-- Find needed item (id preferred) from step; also return a friendly name
+local function _FindUseItemForStep(step)
+    if not step then return nil, nil end
+    local stype = string.upper(step.type or "")
+    if stype == "USE_ITEM" then
+        -- prefer explicit id; fallback to name if provided
+        return (step.itemId or nil), (step.itemName or nil)
+    end
+    if stype == "COMPLETE" and step.objectives and type(step.objectives)=="table" then
+        local i=1
+        while step.objectives[i] do
+            local o = step.objectives[i]
+            if o and string.lower(o.kind or "")=="use_item" then
+                return (o.itemId or nil), (o.label or o.name or step.itemName or nil)
+            end
+            i = i + 1
+        end
+    end
+    return nil, nil
+end
+
+-- Lua 5.0-safe: extract [Name] from an item link
+local function _NameFromItemLink(link)
+    if not link or link == "" then return nil end
+    local _, _, name = string.find(link, "%[(.+)%]")
+    if name and name ~= "" then return name end
+    if GetItemInfo then
+        local nm = GetItemInfo(link)
+        if nm and nm ~= "" then return nm end
+    end
+    return nil
+end
+
+-- Find bag,slot for item by id (preferred) or by plain name
+local function _FindItemInBags_ByIdOrName(id, name)
+    if QS_FindItemInBags_ByIdOrName then
+        local b,s = QS_FindItemInBags_ByIdOrName(id, name)
+        if b and s then return b,s end
+    end
+    if QS_FindItemInBags and id then
+        local b,s = QS_FindItemInBags(id)
+        if b and s then return b,s end
+    end
+    if not name or name == "" then return nil, nil end
+    local want = string.lower(name)
+    for b=0,4 do
+        local slots = (GetContainerNumSlots and GetContainerNumSlots(b)) or 0
+        for s=1,slots do
+            local link = GetContainerItemLink and GetContainerItemLink(b,s)
+            if link then
+                local nm = _NameFromItemLink(link)
+                if nm and string.lower(nm) == want then
+                    return b, s
+                end
+            end
+        end
+    end
+    return nil, nil
+end
+
+-- Count items by id or name (stacks summed)
+local function _CountItemInBags_ByIdOrName(id, name)
+    if QS_CountItemInBags and id then
+        local c = QS_CountItemInBags(id)
+        if c then return c end
+    end
+    if not name or name == "" then return 0 end
+    local want = string.lower(name)
+    local total = 0
+    for b=0,4 do
+        local slots = (GetContainerNumSlots and GetContainerNumSlots(b)) or 0
+        for s=1,slots do
+            local link = GetContainerItemLink and GetContainerItemLink(b,s)
+            if link then
+                local nm = _NameFromItemLink(link)
+                if nm and string.lower(nm) == want then
+                    local _, _, count = GetContainerItemInfo(b, s)
+                    total = total + (count or 1)
+                end
+            end
+        end
+    end
+    return total
+end
+
+local function _UpdateMiniTooltip(id, name)
+    if not mini or not mini:IsShown() then return end
+    if not GameTooltip or not GameTooltip.SetBagItem then return end
+    local b, s = _FindItemInBags_ByIdOrName(id, name)
+    if not b or not s then return end
+    GameTooltip:SetOwner(mini, "ANCHOR_RIGHT")
+    GameTooltip:SetBagItem(b, s) -- pfUI-safe
+    GameTooltip:Show()
+end
+
+local function _MiniUseItemClick()
+    if (not _miniLastItemId) and (not _miniLastItemName) then return end
+    local b,s = _FindItemInBags_ByIdOrName(_miniLastItemId, _miniLastItemName)
+    if b and s and UseContainerItem then
+        UseContainerItem(b, s)
+    else
+        if QS_Print then QS_Print("Item not found in bags.") end
+    end
+end
+
+local function _MiniEnsure()
+    if mini then return end
+    mini = CreateFrame("Button", "QuestShellMiniUse", header)
+    mini:SetWidth(24); mini:SetHeight(24)
+    -- place left of the checkbox
+    mini:SetPoint("RIGHT", header, "RIGHT", -28, 0)
+
+    miniIcon = mini:CreateTexture(nil, "BACKGROUND")
+    miniIcon:SetAllPoints(mini)
+    miniIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
+
+    -- Cooldown overlay (if available in 1.12)
+    if CreateFrame then
+        local ok, cd = pcall(CreateFrame, "Cooldown", "QuestShellMiniUseCD", mini, "CooldownFrameTemplate")
+        if ok and cd then
+            miniCD = cd
+            miniCD:SetAllPoints(mini)
+        end
+    end
+
+    miniCountFS = mini:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
+    miniCountFS:SetPoint("BOTTOMRIGHT", mini, "BOTTOMRIGHT", -1, 1)
+    miniCountFS:SetText("")
+
+    mini:RegisterForClicks("LeftButtonUp", "RightButtonUp")
+    mini:SetScript("OnClick", _MiniUseItemClick)
+    mini:SetScript("OnEnter", function()
+        if _miniLastItemId or _miniLastItemName then _UpdateMiniTooltip(_miniLastItemId, _miniLastItemName) end
+    end)
+    mini:SetScript("OnLeave", function()
+        if GameTooltip then GameTooltip:Hide() end
+    end)
+
+    -- light polling to refresh count/cooldown
+    mini:SetScript("OnUpdate", function()
+        _miniNextPoll = _miniNextPoll + (arg1 or 0)
+        if _miniNextPoll < 0.2 then return end
+        _miniNextPoll = 0
+
+        if (not _miniLastItemId) and (not _miniLastItemName) then return end
+        if not mini:IsShown() then return end
+
+        local c = _CountItemInBags_ByIdOrName(_miniLastItemId, _miniLastItemName) or 0
+        if c > 1 then miniCountFS:SetText(tostring(c)) else miniCountFS:SetText("") end
+
+        if miniCD and CooldownFrame_SetTimer and GetContainerItemCooldown then
+            local b,s = _FindItemInBags_ByIdOrName(_miniLastItemId, _miniLastItemName)
+            if b and s then
+                local start, dur, enable = GetContainerItemCooldown(b, s)
+                if start and dur then CooldownFrame_SetTimer(miniCD, start, dur, enable) end
+            end
+        end
+    end)
+end
+
+local function _ShowMiniForStep(step)
+    _MiniEnsure()
+    local id, name = _FindUseItemForStep(step)
+    if (not id) and (not name or name == "") then
+        mini:Hide()
+        _miniLastItemId, _miniLastItemName = nil, nil
+        return
+    end
+
+    _miniLastItemId, _miniLastItemName = id, name
+
+    -- set icon from bag slot if we can find it; fallback to GetItemInfo(id)
+    local tex = nil
+    do
+        local b,s = _FindItemInBags_ByIdOrName(id, name)
+        if b and s and GetContainerItemInfo then
+            local t,_n,_c,_l,_q,_r = GetContainerItemInfo(b, s)
+            tex = t
+        end
+        if (not tex) and id and GetItemInfo then
+            local _nm,_link,_q,_ilvl,_req,_type,_sub,_stack,_equip, texture = GetItemInfo(id)
+            tex = texture
+        end
+    end
+    miniIcon:SetTexture(tex or "Interface\\Icons\\INV_Misc_QuestionMark")
+
+    -- prime count and cooldown right away
+    local c = _CountItemInBags_ByIdOrName(id, name) or 0
+    if c > 1 then miniCountFS:SetText(tostring(c)) else miniCountFS:SetText("") end
+
+    if miniCD and CooldownFrame_SetTimer and GetContainerItemCooldown then
+        local b,s = _FindItemInBags_ByIdOrName(id, name)
+        if b and s then
+            local start, dur, enable = GetContainerItemCooldown(b, s)
+            if start and dur then CooldownFrame_SetTimer(miniCD, start, dur, enable) end
+        end
+    end
+
+    mini:Show()
+end
+
 -- ------------------------- Create tracker -------------------------
 local function CreateTracker()
     EnsureDB(); if tracker then return end
@@ -355,6 +561,10 @@ local function CreateTracker()
         if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(cur, chk:GetChecked()) end
     end)
 
+    -- Mini use-item button lives in the header, left of the checkbox
+    _MiniEnsure()
+    mini:Hide()
+
     content = CreateFrame("Frame", "QuestShellTrackerContent", tracker)
     content:SetPoint("TOPLEFT", tracker, "TOPLEFT", LEFT_PAD, -(4+24+6))
     content:SetPoint("RIGHT", tracker, "RIGHT", -RIGHT_PAD, 0)
@@ -377,6 +587,9 @@ function QuestShellUI.Update(title, typ, body)
 
     local rows = BuildRows(step, title or "", forceComplete)
     RenderRows(rows)
+
+    -- show/hide mini use-item icon based on step
+    _ShowMiniForStep(step)
 
     if QS_UI_IsStepCompleted then chk:SetChecked(forceComplete) end
 end
