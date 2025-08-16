@@ -369,15 +369,15 @@ end
 -- ------------------------------------------------------------
 -- Step advancement that skips steps already checked
 -- ------------------------------------------------------------
+-- Advance current step; mark current complete unless markCurrentComplete == false
 function QS_AdvanceStep(markCurrentComplete)
-    -- state
-    if not QuestShellDB or not QuestShellDB.guides or not QuestShell.activeGuide then return end
-    local st = QuestShellDB.guides[QuestShell.activeGuide]; if not st then return end
+    local st = QS_GuideState and QS_GuideState() or nil
+    if not st then return end
 
     local chapter = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
     st.completedByChapter = st.completedByChapter or {}
 
-    -- saved shape is an ARRAY of completed indices → build a SET for work
+    -- build a SET of completed indices from saved ARRAY
     local arr = st.completedByChapter[chapter] or {}
     local set = {}
     local i = 1
@@ -388,62 +388,46 @@ function QS_AdvanceStep(markCurrentComplete)
     if n == 0 then return end
 
     local cur = st.currentStep or 1
-    if QS_D then QS_D("Current Step (Cur) "..(cur or "")) end
-    if cur < 1 then cur = 1 end
-    if cur > n then cur = n end
+    if cur < 1 then cur = 1 elseif cur > n then cur = n end
 
-    -- mark current as completed unless explicitly told not to
-    if markCurrentComplete ~= false then
-        set[cur] = true
-    end
+    -- mark current as completed unless told not to
+    if markCurrentComplete ~= false then set[cur] = true end
 
     -- clear transient trackers
     if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
     if itemTrack then
-        itemTrack.itemId = nil
-        itemTrack.itemName = nil
-        itemTrack.prevCount = nil
+        itemTrack.itemId, itemTrack.itemName, itemTrack.prevCount = nil, nil, nil
         itemTrack.lastChangeTime = 0
     end
 
-    -- find next eligible, incomplete step AFTER current (class-gated aware)
-    local nextIdx = QS__FindNextEligibleIncomplete and QS__FindNextEligibleIncomplete(steps, set, cur) or (cur + 1)
+    -- find next eligible, incomplete step AFTER current
+    local nextIdx = (QS__FindNextEligibleIncomplete and QS__FindNextEligibleIncomplete(steps, set, cur)) or (cur + 1)
     st.currentStep = nextIdx
 
-    -- If we passed the end of the current chapter, move on.
+    -- past end of chapter?
     if nextIdx > n then
         local totalCh = (QS_ChapterCount and QS_ChapterCount()) or 1
         local curCh   = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
 
+        -- write back completed array for this chapter
+        local out = {}; local k=1; while k<=n do if set[k] then out[table.getn(out)+1] = k end k=k+1 end
+        st.completedByChapter[chapter] = out
+
         if curCh < totalCh then
-            -- Advance to next chapter and normalize
-            if QuestShell and QuestShell.SetChapter then
-                QuestShell.SetChapter(curCh + 1)
-            end
-            -- write back completed array before exiting
-            local out = {}; local i2=1; while i2 <= n do if set[i2] then out[table.getn(out)+1] = i2 end i2=i2+1 end
-            st.completedByChapter[chapter] = out
+            if QuestShell and QuestShell.SetChapter then QuestShell.SetChapter(curCh + 1) end
             if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
             return
         else
-            -- Entire guide finished → load next guide (prefer nextKey)
-            local out = {}; local i2=1; while i2 <= n do if set[i2] then out[table.getn(out)+1] = i2 end i2=i2+1 end
-            st.completedByChapter[chapter] = out
-            if QS_LoadNextGuideIfAny and QS_LoadNextGuideIfAny() then
-                return
-            end
-            -- If no next guide, clamp to last step (for UI)
-            st.currentStep = n
+            -- whole guide done → try nextKey / next guide
+            if QS_LoadNextGuideIfAny and QS_LoadNextGuideIfAny() then return end
+            st.currentStep = n -- clamp for UI
         end
     end
 
-    -- WRITE BACK as ARRAY (ascending) — this is what UIs expect
-    local out = {}
-    i = 1
-    while i <= n do if set[i] then out[table.getn(out)+1] = i end i = i + 1 end
+    -- write back completed array (ascending)
+    local out = {}; local j=1; while j<=n do if set[j] then out[table.getn(out)+1] = j end j=j+1 end
     st.completedByChapter[chapter] = out
 
-    -- refresh all UI + (re)prime arrow/behaviors through your normal path
     if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
 end
 

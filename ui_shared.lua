@@ -31,14 +31,11 @@ function QS_UI_FullBody(step, progressText)
 end
 
 -- ===== Unified toggle logic for steps =====
-local function QS_UI_GetState()
-    if not (QuestShell and QuestShell.activeGuide and QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]) then
-        return nil
-    end
-    local st = QuestShellDB.guides[QuestShell.activeGuide]
-    st.completedByChapter = st.completedByChapter or {}
-    local ch = st.currentChapter or 1
-    local arr = st.completedByChapter[ch] or {}
+function QS_UI_GetState()
+    local st = QS_GuideState and QS_GuideState() or nil
+    if not st then return nil, 1, {} end
+    local ch = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
+    local arr = (st.completedByChapter and st.completedByChapter[ch]) or {}
     return st, ch, arr
 end
 

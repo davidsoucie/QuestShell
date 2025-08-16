@@ -566,9 +566,9 @@ local function CreateTracker()
     ct:SetAllPoints(chk)
     chk:SetCheckedTexture(ct)
     chk:SetScript("OnClick", function()
-        local st = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
+        local st = QS_GuideState and QS_GuideState() or nil
         if not st then return end
-        local cur = (st.currentStep or 1)
+        local cur = st.currentStep or 1
         if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(cur, chk:GetChecked()) end
     end)
 
@@ -592,8 +592,8 @@ function QuestShellUI.Update(title, typ, body)
 
     local step = QS_CurrentStep and QS_CurrentStep() or nil
 
-    local st   = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
-    local cur  = (st and st.currentStep) or 1
+    local st = QS_GuideState and QS_GuideState() or nil
+    local cur = (st and st.currentStep) or 1
     local forceComplete = (QS_UI_IsStepCompleted and QS_UI_IsStepCompleted(cur)) and true or false
 
     local rows = BuildRows(step, title or "", forceComplete)
