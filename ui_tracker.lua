@@ -1,5 +1,4 @@
 -- =========================
-
 -- QuestShell UI — Tracker
 -- Compact tracker for the current step with: header, checkbox, rows with icons.
 -- Compatibility: Vanilla/Turtle (Lua 5.0)
@@ -10,6 +9,7 @@
 -- Notes:
 --   - Uses fixed slot widths for bullet/icon for reliable alignment in 1.12.
 --   - No 'self' / no '#' operator; uses table.getn, etc.
+--   - FIX: header "Step n/x" computes from the live current index in Update().
 -- =========================
 
 QuestShellUI = QuestShellUI or {}
@@ -239,8 +239,8 @@ local function RenderRows(rows)
     QS_TrackerApplyFontScale()
 end
 
--- ------------------------- Header -------------------------
-function UpdateHeaderStep()
+-- ------------------------- Header (uses live current index) -------------------------
+local function UpdateHeaderStep(currentIndexOverride)
     local steps = (QS_GuideData and QS_GuideData()) or {}
     local n = table.getn(steps or {})
 
@@ -250,25 +250,36 @@ function UpdateHeaderStep()
         return (not QS_StepIsEligible) or QS_StepIsEligible(s)
     end
 
-    -- current = ordinal among eligible steps (skip gated)
-    local curIdx = 1
-    local st = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
-    if st and st.currentStep then curIdx = st.currentStep end
+    -- total eligible
+    local total = 0
+    local i = 1
+    while i <= n do
+        if isEligible(i) then total = total + 1 end
+        i = i + 1
+    end
+
+    local curIdx = tonumber(currentIndexOverride)
+    if not curIdx then
+        local st = QS_GuideState and QS_GuideState() or nil
+        curIdx = (st and st.currentStep) or 1
+    end
+    if curIdx < 1 then curIdx = 1 end
+    if curIdx > n then curIdx = n end
 
     local cur = 0
-    local i = 1
-    while i <= math.min(curIdx, n) do
+    i = 1
+    while i <= curIdx do
         if isEligible(i) then cur = cur + 1 end
         i = i + 1
     end
-    if cur == 0 and n > 0 then cur = 1 end
+    if cur == 0 and total > 0 then cur = 1 end
 
-    headerStepFS:SetText("Step "..tostring(cur))
+    if headerStepFS then
+        headerStepFS:SetText("Step "..tostring(cur))
+    end
 end
 
 -- ------------------------- Mini Use-Item button -------------------------
--- Find needed item (id preferred) from step; also return a friendly name
--- Find needed item (id preferred) from step; also return a friendly name
 local function _FindUseItemForStep(step)
     if not step then return nil, nil end
     local stype = string.upper(step.type or "")
@@ -278,7 +289,6 @@ local function _FindUseItemForStep(step)
     end
 
     if stype == "COMPLETE" then
-        -- First: look for an objective { kind="use_item" }
         if step.objectives and type(step.objectives)=="table" then
             local i=1
             while step.objectives[i] do
@@ -289,7 +299,6 @@ local function _FindUseItemForStep(step)
                 i = i + 1
             end
         end
-        -- Fallback: accept top-level itemId/itemName
         if step.itemId or step.itemName then
             return step.itemId, step.itemName
         end
@@ -298,7 +307,6 @@ local function _FindUseItemForStep(step)
     return nil, nil
 end
 
--- Lua 5.0-safe: extract [Name] from an item link
 local function _NameFromItemLink(link)
     if not link or link == "" then return nil end
     local _, _, name = string.find(link, "%[(.+)%]")
@@ -310,7 +318,6 @@ local function _NameFromItemLink(link)
     return nil
 end
 
--- Find bag,slot for item by id (preferred) or by plain name
 local function _FindItemInBags_ByIdOrName(id, name)
     if QS_FindItemInBags_ByIdOrName then
         local b,s = QS_FindItemInBags_ByIdOrName(id, name)
@@ -337,7 +344,6 @@ local function _FindItemInBags_ByIdOrName(id, name)
     return nil, nil
 end
 
--- Count items by id or name (stacks summed)
 local function _CountItemInBags_ByIdOrName(id, name)
     if QS_CountItemInBags and id then
         local c = QS_CountItemInBags(id)
@@ -453,8 +459,12 @@ local function _ShowMiniForStep(step)
     do
         local b,s = _FindItemInBags_ByIdOrName(id, name)
         if b and s and GetContainerItemInfo then
-            local t,_n,_c,_l,_q,_r = GetContainerItemInfo(b, s)
-            tex = t
+            local t = GetContainerItemInfo(b, s)
+            if type(t) == "table" then
+                tex = t[1]
+            else
+                tex = t
+            end
         end
         if (not tex) and id and GetItemInfo then
             local _nm,_link,_q,_ilvl,_req,_type,_sub,_stack,_equip, texture = GetItemInfo(id)
@@ -552,7 +562,7 @@ local function CreateTracker()
 
     headerStepFS = header:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     headerStepFS:SetPoint("LEFT", header, "LEFT", 6, 0)
-    headerStepFS:SetText("Step 1/1")
+    headerStepFS:SetText("Step 1")
 
     chk = CreateFrame("CheckButton", "QuestShellTrackerHeaderCheck", header, "UICheckButtonTemplate")
     chk:SetWidth(16); chk:SetHeight(16)
@@ -588,12 +598,14 @@ end
 -- ------------------------- Public API -------------------------
 function QuestShellUI.Update(title, typ, body)
     if not tracker then CreateTracker() end
-    UpdateHeaderStep()
-
-    local step = QS_CurrentStep and QS_CurrentStep() or nil
 
     local st = QS_GuideState and QS_GuideState() or nil
     local cur = (st and st.currentStep) or 1
+
+    -- header step uses the *live* current index
+    UpdateHeaderStep(cur)
+
+    local step = QS_CurrentStep and QS_CurrentStep() or nil
     local forceComplete = (QS_UI_IsStepCompleted and QS_UI_IsStepCompleted(cur)) and true or false
 
     local rows = BuildRows(step, title or "", forceComplete)

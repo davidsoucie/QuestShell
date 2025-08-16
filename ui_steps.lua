@@ -21,6 +21,7 @@ end
 --   - Fixed indents for bullet/icon/text for aligned columns.
 --   - PERF: cached text heights (width|text).
 --   - FIX: hard refresh scrollbar min/max to remove empty trailing scroll when guide shrinks.
+--   - FIX: header "Step n/x" uses the live currentIndex passed to UpdateList.
 -- =========================
 
 QuestShellUI = QuestShellUI or {}
@@ -141,18 +142,15 @@ local function _RefreshScrollBar()
         if range == 0 then
             sb:SetValue(0)
             if scroll.SetVerticalScroll then scroll:SetVerticalScroll(0) end
-            -- hide arrows when no scrolling is possible
             local up = getglobal and getglobal("QuestShellStepsScrollScrollBarScrollUpButton")
             local down = getglobal and getglobal("QuestShellStepsScrollScrollBarScrollDownButton")
             if up and up.Hide then up:Hide() end
             if down and down.Hide then down:Hide() end
         else
-            -- make sure arrows are visible when scrolling is possible
             local up = getglobal and getglobal("QuestShellStepsScrollScrollBarScrollUpButton")
             local down = getglobal and getglobal("QuestShellStepsScrollScrollBarScrollDownButton")
             if up and up.Show then up:Show() end
             if down and down.Show then down:Show() end
-            -- clamp current value inside new range
             local cur = sb:GetValue() or 0
             if cur > range then
                 sb:SetValue(range)
@@ -160,7 +158,6 @@ local function _RefreshScrollBar()
             end
         end
     else
-        -- fallback: at least clamp the scroll position
         if scroll.SetVerticalScroll then
             local cur = scroll:GetVerticalScroll() or 0
             if range == 0 then scroll:SetVerticalScroll(0)
@@ -256,8 +253,8 @@ local function ResizeRowsToWidth()
     end
 end
 
--- ------------------------ Header ------------------------
-function SetHeaderFromChapter()
+-- ------------------------ Header (uses live current index) ------------------------
+local function SetHeaderFromChapter(currentIndexOverride)
     local meta = QS_ChapterMeta and QS_ChapterMeta(QS_CurrentChapterIndex() or 1) or nil
     local gmeta = QS_GuideMeta and QS_GuideMeta() or {}
     local title = (meta and meta.title) or (gmeta.title or "QuestShell")
@@ -265,7 +262,8 @@ function SetHeaderFromChapter()
     local maxL = meta and meta.maxLevel or gmeta.maxLevel
     local levels = ""; if minL or maxL then levels = "  "..tostring(minL or "?").."-"..tostring(maxL or "?") end
 
-    headerTitle:SetText("|cffffee00"..title.."|r"); headerLevelFS:SetText(levels)
+    if headerTitle then headerTitle:SetText("|cffffee00"..title.."|r") end
+    if headerLevelFS then headerLevelFS:SetText(levels) end
 
     local steps = (QS_GuideData and QS_GuideData()) or {}
     local n = table.getn(steps or {})
@@ -284,19 +282,26 @@ function SetHeaderFromChapter()
         i = i + 1
     end
 
-    -- current eligible ordinal
-    local curIdx = 1
-    local st = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
-    if st and st.currentStep then curIdx = st.currentStep end
+    -- visible ordinal from override (fallback to DB if missing)
+    local curIdx = tonumber(currentIndexOverride)
+    if not curIdx then
+        local st = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
+        curIdx = (st and st.currentStep) or 1
+    end
+    if curIdx < 1 then curIdx = 1 end
+    if curIdx > n then curIdx = n end
+
     local cur = 0
     i = 1
-    while i <= math.min(curIdx, n) do
+    while i <= curIdx do
         if isEligible(i) then cur = cur + 1 end
         i = i + 1
     end
     if cur == 0 and total > 0 then cur = 1 end
 
-    headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
+    if headerStepFS then
+        headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
+    end
 end
 
 -- ------------------------ Build visual rows via central registry ------------------------
@@ -403,7 +408,8 @@ local function RebuildContent(steps, currentIndex, completedMap)
     -- HARD refresh scrollbar so no leftover range sticks around
     _RefreshScrollBar()
 
-    SetHeaderFromChapter()
+    -- header uses the live index we just rendered with
+    SetHeaderFromChapter(currentIndex)
 end
 
 local function Relayout()
@@ -531,7 +537,7 @@ local function CreateList()
     end)
 
     listFrame:Show()
-    SetHeaderFromChapter()
+    SetHeaderFromChapter(_lastCurrentIndex or 1)
 end
 
 -- ------------------------ Public API ------------------------
@@ -550,7 +556,7 @@ function QuestShellUI.UpdateList(steps, currentIndex, completedMap)
     if scroll and scroll.SetVerticalScroll then scroll:SetVerticalScroll(0) end
 
     ClearHeightCache()
-    RebuildContent(steps, currentIndex, completedMap) -- this will call _RefreshScrollBar again
+    RebuildContent(steps, currentIndex, completedMap) -- header + scrollbar handled inside
 end
 
 -- Build once at VARIABLES_LOADED so /qs steps is instant
