@@ -11,18 +11,17 @@ end
 -- =========================
 -- QuestShell UI — Steps
 -- Scrollable list of all steps in current chapter (with zebra rows, checkboxes)
--- + Hearth-button context menu (no big menu pop-up)
+-- + Hearth-button context menu
 -- Compatibility: Vanilla/Turtle (Lua 5.0)
 -- =========================
 -- Public:
 --   QuestShellUI.ToggleList()
 --   QuestShellUI.UpdateList(steps, currentIndex, completedMap)
---   QuestShellUI.ShowStepsMenu(anchorFrame)   -- NEW: small context menu by the hearth
+--   QuestShellUI.ShowStepsMenu(anchorFrame)
 -- Notes:
 --   - Absolute positioning to avoid 1.12 autosizing quirks.
---   - Fixed indents for bullet/icon/text for aligned columns.
 --   - PERF: cached text heights (width|text).
---   - FIX: hard refresh scrollbar min/max to remove empty trailing scroll when guide shrinks.
+--   - Scrollbar: hard min/max refresh + clamp; **preserve scroll on step advance**.
 -- =========================
 
 QuestShellUI = QuestShellUI or {}
@@ -93,7 +92,7 @@ local function ClearHeightCache() _heightCache = {} end
 
 -- Context menu bits
 local _ctxMenu, _ctxOverlay
-local _ctxBtns = {}   -- dynamic text for tracker/arrow/lock
+local _ctxBtns = {}
 
 -- ------------------------ Helpers ------------------------
 local function ClampAndPlace(f, x, y, fw, fh)
@@ -256,8 +255,8 @@ local function ResizeRowsToWidth()
     end
 end
 
--- ------------------------ Header ------------------------
-function SetHeaderFromChapter()
+-- ------------------------ Header (uses live current index) ------------------------
+local function SetHeaderFromChapter(currentIndexOverride)
     local meta = QS_ChapterMeta and QS_ChapterMeta(QS_CurrentChapterIndex() or 1) or nil
     local gmeta = QS_GuideMeta and QS_GuideMeta() or {}
     local title = (meta and meta.title) or (gmeta.title or "QuestShell")
@@ -265,7 +264,8 @@ function SetHeaderFromChapter()
     local maxL = meta and meta.maxLevel or gmeta.maxLevel
     local levels = ""; if minL or maxL then levels = "  "..tostring(minL or "?").."-"..tostring(maxL or "?") end
 
-    headerTitle:SetText("|cffffee00"..title.."|r"); headerLevelFS:SetText(levels)
+    if headerTitle then headerTitle:SetText("|cffffee00"..title.."|r") end
+    if headerLevelFS then headerLevelFS:SetText(levels) end
 
     local steps = (QS_GuideData and QS_GuideData()) or {}
     local n = table.getn(steps or {})
@@ -283,18 +283,25 @@ function SetHeaderFromChapter()
         i = i + 1
     end
 
-    local curIdx = 1
-    local st = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
-    if st and st.currentStep then curIdx = st.currentStep end
+    local curIdx = tonumber(currentIndexOverride)
+    if not curIdx then
+        local st = QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]
+        curIdx = (st and st.currentStep) or 1
+    end
+    if curIdx < 1 then curIdx = 1 end
+    if curIdx > n then curIdx = n end
+
     local cur = 0
     i = 1
-    while i <= math.min(curIdx, n) do
+    while i <= curIdx do
         if isEligible(i) then cur = cur + 1 end
         i = i + 1
     end
     if cur == 0 and total > 0 then cur = 1 end
 
-    headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
+    if headerStepFS then
+        headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
+    end
 end
 
 -- ------------------------ Build visual rows via central registry ------------------------
@@ -398,7 +405,7 @@ local function RebuildContent(steps, currentIndex, completedMap)
     scrollChild:SetHeight(y)
 
     _RefreshScrollBar()
-    SetHeaderFromChapter()
+    SetHeaderFromChapter(currentIndex)
 end
 
 local function Relayout()
@@ -468,22 +475,18 @@ local function _EnsureContextMenu()
 
     local row = 1
 
-    -- 1) Open Guides
     _MakeMenuButton(_ctxMenu, row, "Open Guides…", function()
         if QuestShellUI and QuestShellUI.ToggleMenu then QuestShellUI.ToggleMenu() end
     end); row = row + 1
 
-    -- 2) Toggle Tracker
     _ctxBtns.tracker = _MakeMenuButton(_ctxMenu, row, "Show Tracker", function()
         local f = (getglobal and getglobal("QuestShellTracker")) or QuestShellTracker
-        if not f then
-            if QuestShellUI and QuestShellUI.Update then QuestShellUI.Update() end
+        if not f then if QuestShellUI and QuestShellUI.Update then QuestShellUI.Update() end
             f = (getglobal and getglobal("QuestShellTracker")) or QuestShellTracker
         end
         if f then if f:IsShown() then f:Hide() else f:Show() end end
     end); row = row + 1
 
-    -- 3) Arrow on/off
     _ctxBtns.arrow = _MakeMenuButton(_ctxMenu, row, "Arrow: On", function()
         QuestShellDB = QuestShellDB or {}; QuestShellDB.ui = QuestShellDB.ui or {}
         local cur = (QuestShellDB.ui.arrowEnabled == true)
@@ -492,26 +495,22 @@ local function _EnsureContextMenu()
         if cur and QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
     end); row = row + 1
 
-    -- 4) Lock/Unlock frames
     _ctxBtns.lock = _MakeMenuButton(_ctxMenu, row, "Lock Frames", function()
         EnsureDB()
         QuestShellDB.ui.locked = not QuestShellDB.ui.locked
     end); row = row + 1
 
-    -- 5) Options (if available)
     _MakeMenuButton(_ctxMenu, row, "Options…", function()
         if QuestShellUI and QuestShellUI.ToggleOptions then QuestShellUI.ToggleOptions()
         elseif QS_Print then QS_Print("Options UI not found.") end
     end); row = row + 1
 
-    -- Size to content
     _ctxMenu:SetHeight(6 + (row-1)*20 + 6)
     _ctxMenu:SetScript("OnHide", function() if _ctxOverlay then _ctxOverlay:Hide() end end)
 end
 
 local function _RefreshContextButtonTexts()
     if not _ctxMenu then return end
-    -- Tracker
     do
         local f = (getglobal and getglobal("QuestShellTracker")) or QuestShellTracker
         local shown = f and f:IsShown()
@@ -519,7 +518,6 @@ local function _RefreshContextButtonTexts()
             _ctxBtns.tracker._label:SetText(shown and "Hide Tracker" or "Show Tracker")
         end
     end
-    -- Arrow
     do
         QuestShellDB = QuestShellDB or {}; QuestShellDB.ui = QuestShellDB.ui or {}
         local on = (QuestShellDB.ui.arrowEnabled == true)
@@ -527,7 +525,6 @@ local function _RefreshContextButtonTexts()
             _ctxBtns.arrow._label:SetText(on and "Arrow: Off" or "Arrow: On")
         end
     end
-    -- Lock
     do
         EnsureDB()
         local locked = (QuestShellDB.ui.locked == true)
@@ -543,7 +540,6 @@ function QuestShellUI.ShowStepsMenu(anchor)
 
     _ctxOverlay:Show()
     _ctxMenu:ClearAllPoints()
-    -- Prefer showing below-left of the anchor
     if anchor then
         _ctxMenu:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -2, -2)
     else
@@ -615,10 +611,7 @@ local function CreateList()
     local hearth = CreateFrame("Button", "QuestShellStepsMenuBtn", header)
     hearth:SetWidth(18); hearth:SetHeight(18); hearth:SetPoint("LEFT", header, "LEFT", 6, 0)
     local htex = hearth:CreateTexture(nil, "ARTWORK"); htex:SetAllPoints(hearth); htex:SetTexture(TEX_HEARTH)
-    hearth:SetScript("OnClick", function()
-        -- NEW: show a compact context menu next to the hearth icon
-        QuestShellUI.ShowStepsMenu(hearth)
-    end)
+    hearth:SetScript("OnClick", function() QuestShellUI.ShowStepsMenu(hearth) end)
 
     local classIcon = header:CreateTexture(nil, "ARTWORK")
     classIcon:SetWidth(18); classIcon:SetHeight(18)
@@ -671,7 +664,7 @@ local function CreateList()
     end)
 
     listFrame:Show()
-    SetHeaderFromChapter()
+    SetHeaderFromChapter(_lastCurrentIndex or 1)
 end
 
 -- ------------------------ Public API ------------------------
@@ -682,15 +675,33 @@ end
 
 function QuestShellUI.UpdateList(steps, currentIndex, completedMap)
     if not listFrame then CreateList() end
+
+    -- Remember previous scroll and whether we changed guide tables
+    local oldStepsRef = _lastSteps
+    local sb = (getglobal and getglobal("QuestShellStepsScrollScrollBar")) or nil
+    local prevScroll = 0
+    if sb and sb.GetValue then prevScroll = sb:GetValue() or 0
+    elseif scroll and scroll.GetVerticalScroll then prevScroll = scroll:GetVerticalScroll() or 0 end
+    local guideChanged = (oldStepsRef ~= steps)
+
+    -- Store new state
     _lastSteps, _lastCurrentIndex, _lastCompletedMap = steps, currentIndex, completedMap
 
-    -- Reset scroll first (so scrollbar value is sane before recompute)
-    local sb = (getglobal and getglobal("QuestShellStepsScrollScrollBar")) or nil
-    if sb and sb.SetValue then sb:SetValue(0) end
-    if scroll and scroll.SetVerticalScroll then scroll:SetVerticalScroll(0) end
-
     ClearHeightCache()
-    RebuildContent(steps, currentIndex, completedMap)
+    RebuildContent(steps, currentIndex, completedMap) -- refreshes min/max and header
+
+    -- Restore scroll unless guide changed (then reset to 0). Always clamp.
+    sb = (getglobal and getglobal("QuestShellStepsScrollScrollBar")) or nil
+    local target = guideChanged and 0 or (prevScroll or 0)
+    if sb and sb.GetMinMaxValues then
+        local _, max = sb:GetMinMaxValues()
+        if not max then max = 0 end
+        if target > max then target = max end
+        sb:SetValue(target)
+        if scroll and scroll.SetVerticalScroll then scroll:SetVerticalScroll(target) end
+    else
+        if scroll and scroll.SetVerticalScroll then scroll:SetVerticalScroll(target or 0) end
+    end
 end
 
 -- Build once at VARIABLES_LOADED so /qs steps is instant
