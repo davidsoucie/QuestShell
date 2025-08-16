@@ -1,24 +1,11 @@
 #!/usr/bin/env python3
 """
-TourGuide to QuestShell Converter (with conflict summary)
+TourGuide to QuestShell Converter (Enhanced with DB validation)
 ------------------------------------------------------------------
-- Preserves order of grouped L-lines (inserted at group position)
-- K -> COMPLETE with kill objective
-- L-lines are always loot-first (even if note says "Kill ...")
-- Per-objective notes for grouped L objectives
-- Better "Use ..." parsing
-- NPC extraction: uppercase initial, extra patterns ("find <Name> in", "<Name>, ...")
-- Accept w/ item: don't require NPC
-- Title backfill from ACCEPT, TURNIN, COMPLETE
-- Title cleanup (strip (Part N), |TAG|...|)
-- Bring N Item parsing; Kill-until-find parsing
-- Kill objectives never keep itemId
-- Skip [[ and ]] lines even with trailing comments
-- README includes detailed issues; writes *_issues.json
-- Writes *_mappings.json (questId->title, itemId->name)
-- Logs duplicate item IDs with different names and writes *_conflicts.json
-- Class restriction is emitted UPPERCASE (e.g., DRUID, WARRIOR)
-- Race restriction is emitted UPPERCASE (e.g., NIGHT ELF, TAUREN/ORC)
+- Cross-references with quests.lua, items.lua, and units.lua databases
+- Validates and corrects item IDs and names
+- K-lines with |L| codes properly create loot objectives
+- Authoritative quest titles from quests.lua
 """
 
 import re, os, sys, json
@@ -54,6 +41,23 @@ class QuestStep:
     line_num: int = 0
 
 class TourGuideConverter:
+    def get_authoritative_quest_title(self, quest_id: int, fallback_title: str | None = None) -> str | None:
+        """Return the best title for a quest id.
+        Prefers pfDB title from quests.lua (field "T"). Falls back to the given title.
+        Returns None if nothing is available.
+        """
+        try:
+            if quest_id in self.db_quests:
+                data = self.db_quests.get(quest_id) or {}
+                title = data.get("T") or data.get("t") or None
+                if title:
+                    return title.strip()
+        except Exception:
+            pass
+        if fallback_title:
+            return fallback_title.strip()
+        return None
+
     def __init__(self):
         self.issues: List[ConversionIssue] = []
         self.stats = {'total_lines':0,'converted_steps':0,'skipped_lines':0,'issues_found':0}
@@ -67,6 +71,220 @@ class TourGuideConverter:
         # Name history & conflict events
         self._item_id_names: Dict[int, List[str]] = {}
         self.item_conflicts: List[Dict[str, Any]] = []
+        
+        # Database lookups (loaded from Lua files)
+        self.db_quests: Dict[int, Dict[str, str]] = {}
+        self.db_items: Dict[int, str] = {}
+        self.db_units: Dict[int, str] = {}
+        self.item_name_to_id: Dict[str, int] = {}  # Reverse lookup
+        self.unit_name_to_id: Dict[str, int] = {}  # Reverse lookup
+        
+        # Load databases if available
+        self.load_databases()
+
+    def _normalize_for_lookup(self, s: str) -> str:
+        """Return a lenient, ASCII-only lowercase key for fuzzy lookups.
+        - Lowercase
+        - Strip surrounding whitespace
+        - Replace multiple spaces with single space
+        - Remove punctuation like commas, apostrophes, parentheses
+        - Remove accent marks
+        """
+        import unicodedata, string, re as _re
+        if s is None:
+            return ""
+        # lowercase + trim
+        s = s.lower().strip()
+        # normalize accents
+        s = unicodedata.normalize('NFKD', s)
+        s = ''.join(ch for ch in s if not unicodedata.combining(ch))
+        # replace non-alnum with space
+        s = ''.join(ch if ch.isalnum() else ' ' for ch in s)
+        # collapse whitespace
+        s = _re.sub(r"\s+", " ", s).strip()
+        return s
+
+    def load_databases(self):
+        """Load the Lua database files if they exist."""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        
+        # Load quests.lua
+        quests_file = os.path.join(script_dir, 'quests.lua')
+        if os.path.exists(quests_file):
+            self.db_quests = self.parse_quests_lua(quests_file)
+            print(f"✅ Loaded {len(self.db_quests)} quests from quests.lua")
+        
+        # Load items.lua
+        items_file = os.path.join(script_dir, 'items.lua')
+        if os.path.exists(items_file):
+            self.db_items = self.parse_items_lua(items_file)
+            # Build reverse lookup
+            for item_id, item_name in self.db_items.items():
+                normalized = self._normalize_for_lookup(item_name)
+                self.item_name_to_id[normalized] = item_id
+            print(f"✅ Loaded {len(self.db_items)} items from items.lua")
+        
+        # Load units.lua
+        units_file = os.path.join(script_dir, 'units.lua')
+        if os.path.exists(units_file):
+            self.db_units = self.parse_units_lua(units_file)
+            # Build reverse lookup
+            for unit_id, unit_name in self.db_units.items():
+                normalized = self._normalize_for_lookup(unit_name)
+                self.unit_name_to_id[normalized] = unit_id
+            print(f"✅ Loaded {len(self.db_units)} units from units.lua")
+
+    def parse_items_lua(self, filepath: str) -> Dict[int, str]:
+        """Parse items.lua file with pfDB structure: pfDB["items"]["enUS"] = { [id] = "Name", ... }"""
+        items: Dict[int, str] = {}
+        try:
+            with open(filepath, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except FileNotFoundError:
+            self.log(f"⚠️ items.lua not found at: {filepath}")
+            return items
+        # Try strict, then permissive
+        m = re.search(r'pfDB\["items"\]\["enUS"\]\s*=\s*\{(.*?)\n\}', content, re.DOTALL)
+        if not m:
+            m = re.search(r'pfDB\["items"\]\["enUS"\]\s*=\s*\{(.*)\}', content, re.DOTALL)
+        if not m:
+            self.log("⚠️ Could not find pfDB['items']['enUS'] in items.lua")
+            return items
+        block = m.group(1)
+        for item_id_str, item_name in re.findall(r'\[(\d+)\]\s*=\s*"((?:[^"\\]|\\.)*)"', block):
+            try:
+                items[int(item_id_str)] = (item_name
+                    .replace('\\n', '\n')
+                    .replace('\\"', '"')
+                    .replace("\\'", "'")
+                )
+            except ValueError:
+                continue
+        return items
+
+
+    def parse_quests_lua(self, filepath: str) -> Dict[int, Dict[str, str]]:
+        """Parse quests.lua file with pfDB structure."""
+        quests: Dict[int, Dict[str, str]] = {}
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # pfDB["quests"]["enUS"] = { ... }
+        pfdb_match = re.search(r'pfDB\["quests"\]\["enUS"\]\s*=\s*\{(.*?)\n\}', content, re.DOTALL)
+        if not pfdb_match:
+            # fallback (more permissive)
+            pfdb_match = re.search(r'pfDB\["quests"\]\["enUS"\]\s*=\s*\{(.*)\}', content, re.DOTALL)
+
+        if not pfdb_match:
+            print("⚠️ Could not find pfDB['quests']['enUS'] in quests.lua")
+            return quests
+
+        quests_content = pfdb_match.group(1)
+
+        # Rough match entries: [123] = { ["D"]="..", ["O"]="..", ["T"]=".." }
+        entry_pattern = r'\[(\d+)\]\s*=\s*\{([^}]*(?:\{[^}]*\}[^}]*)*)\}'
+        for quest_id_str, quest_data in re.findall(entry_pattern, quests_content):
+            quest_id = int(quest_id_str)
+            info: Dict[str, str] = {}
+
+            for key in ("D", "O", "T"):
+                m = re.search(rf'\["{key}"\]\s*=\s*"((?:[^"\\]|\\.)*)"', quest_data)
+                if m:
+                    info[key] = (
+                        m.group(1)
+                        .replace('\\n', '\n')
+                        .replace('\\"', '"')
+                        .replace("\\'", "'")
+                    )
+            if info:
+                quests[quest_id] = info
+
+        return quests
+
+
+    def validate_and_correct_item(self, item_id: int, item_name: str, line_num: int, original_line: str) -> Tuple[int, str]:
+        """Validate item ID against name and correct if necessary."""
+        if not self.db_items:
+            return item_id, item_name
+        
+        # Check if the item ID exists in database
+        if item_id in self.db_items:
+            db_name = self.db_items[item_id]
+            normalized_db = self._normalize_for_lookup(db_name)
+            normalized_given = self._normalize_for_lookup(item_name)
+            
+            # If names don't match, log it
+            if normalized_db != normalized_given:
+                # Try to find the correct item ID by name
+                correct_id = self.find_item_id_by_name(item_name)
+                if correct_id and correct_id != item_id:
+                    self.log_issue(line_num, "ITEM_ID_CORRECTED",
+                                  f"Item ID corrected from {item_id} ({db_name}) to {correct_id} ({item_name})",
+                                  original_line, "high")
+                    return correct_id, self.db_items.get(correct_id, item_name)
+                else:
+                    # Use database name as authoritative
+                    self.log_issue(line_num, "ITEM_NAME_MISMATCH",
+                                  f"Item {item_id}: using DB name '{db_name}' instead of '{item_name}'",
+                                  original_line, "medium")
+                    return item_id, db_name
+            return item_id, db_name
+        else:
+            # Item ID not in database, try to find by name
+            correct_id = self.find_item_id_by_name(item_name)
+            if correct_id:
+                self.log_issue(line_num, "ITEM_ID_NOT_FOUND",
+                              f"Item ID {item_id} not in DB, found ID {correct_id} for '{item_name}'",
+                              original_line, "high")
+                return correct_id, self.db_items[correct_id]
+            else:
+                self.log_issue(line_num, "ITEM_NOT_IN_DB",
+                              f"Item ID {item_id} '{item_name}' not found in database",
+                              original_line, "medium")
+                return item_id, item_name
+
+    def find_item_id_by_name(self, item_name: str) -> Optional[int]:
+        """Find item ID by name using fuzzy matching."""
+        if not item_name:
+            return None
+        
+        normalized = self._normalize_for_lookup(item_name)
+        
+        # Direct lookup
+        if normalized in self.item_name_to_id:
+            return self.item_name_to_id[normalized]
+        
+        # Try without 's' at the end (singular/plural)
+        if normalized.endswith('s'):
+            singular = normalized[:-1]
+            if singular in self.item_name_to_id:
+                return self.item_name_to_id[singular]
+        
+        # Try adding 's' (plural)
+        plural = normalized + 's'
+        if plural in self.item_name_to_id:
+            return self.item_name_to_id[plural]
+        
+        return None
+
+    def validate_npc_name(self, npc_name: str) -> str:
+        """Validate and potentially correct NPC name."""
+        if not npc_name or not self.db_units:
+            return npc_name
+        
+        normalized = self._normalize_for_lookup(npc_name)
+        
+        # Check if exact match exists
+        if normalized in self.unit_name_to_id:
+            unit_id = self.unit_name_to_id[normalized]
+            return self.db_units[unit_id]
+        
+        # Fuzzy match - find closest match
+        for db_normalized, unit_id in self.unit_name_to_id.items():
+            if normalized in db_normalized or db_normalized in normalized:
+                return self.db_units[unit_id]
+        
+        return npc_name
 
     # ---------- helpers ----------
     def log_issue(self, ln, t, d, orig, sev="medium"):
@@ -140,6 +358,10 @@ class TourGuideConverter:
         """
         Canonicalize item_id -> name, prefer specific over generic, and log conflicts.
         """
+        # Validate against database if available
+        if self.db_items and item_id in self.db_items:
+            name = self.db_items[item_id]  # Use database name as authoritative
+        
         name_clean = self._sanitize_item_label(name)
         current = self.item_id_to_name.get(item_id)
 
@@ -230,7 +452,9 @@ class TourGuideConverter:
                 if not re.match(r'^[A-Z]', npc):
                     continue
                 if not re.match(r'^(Travel|Go|Use|Kill|Collect|Find|Enter|Exit|Head|Run|Follow|Click|Take|Escort|Reach|Bring|Turn|Hand|Deliver)\b', npc, re.I):
-                    return npc
+                    # Validate NPC name against database
+                    validated_npc = self.validate_npc_name(npc)
+                    return validated_npc
         return None
 
     def extract_special_codes(self, line:str)->Dict[str,Any]:
@@ -281,8 +505,14 @@ class TourGuideConverter:
             item_clean = self._sanitize_item_label(item.strip())
             o={"kind":"loot","label":item_clean,"target":int(num)}
             if 'loot_item_id' in codes:
-                o['itemId']=codes['loot_item_id']; self.found_item_ids.add(codes['loot_item_id'])
-                self._record_item_mapping(codes['loot_item_id'], item_clean, 0, note, "collect")
+                # Validate and correct item
+                item_id, corrected_name = self.validate_and_correct_item(
+                    codes['loot_item_id'], item_clean, 0, note
+                )
+                o['itemId'] = item_id
+                o['label'] = corrected_name
+                self.found_item_ids.add(item_id)
+                self._record_item_mapping(item_id, corrected_name, 0, note, "collect")
             objs.append(o); return objs
 
         # Kill A and B
@@ -306,8 +536,14 @@ class TourGuideConverter:
             item_clean = self._sanitize_item_label(item.strip())
             o={"kind":"loot","label":item_clean,"target":codes.get('loot_amount',1)}
             if 'loot_item_id' in codes:
-                o['itemId']=codes['loot_item_id']; self.found_item_ids.add(codes['loot_item_id'])
-                self._record_item_mapping(codes['loot_item_id'], item_clean, 0, note, "kill-until-find")
+                # Validate and correct item
+                item_id, corrected_name = self.validate_and_correct_item(
+                    codes['loot_item_id'], item_clean, 0, note
+                )
+                o['itemId'] = item_id
+                o['label'] = corrected_name
+                self.found_item_ids.add(item_id)
+                self._record_item_mapping(item_id, corrected_name, 0, note, "kill-until-find")
             objs.append(o)
 
         # Use item
@@ -317,9 +553,14 @@ class TourGuideConverter:
             m=re.search(use_pat, note)
             label=m.group(1).strip() if m else f"Item {codes['use_item']}"
             label_clean = self._sanitize_item_label(label)
-            objs.append({"kind":"use_item","label":label_clean,"target":1,"itemId":codes['use_item']})
+            
+            # Validate item
+            item_id, corrected_name = self.validate_and_correct_item(
+                codes['use_item'], label_clean, 0, note
+            )
+            objs.append({"kind":"use_item","label":corrected_name,"target":1,"itemId":item_id})
             if not label.startswith('Item '):
-                self._record_item_mapping(codes['use_item'], label_clean, 0, note, "use-item")
+                self._record_item_mapping(item_id, corrected_name, 0, note, "use-item")
         else:
             m=re.search(use_pat, note)
             if m: objs.append({"kind":"use_item","label":self._sanitize_item_label(m.group(1).strip()),"target":1})
@@ -336,7 +577,9 @@ class TourGuideConverter:
         m=re.match(r'^A\s+(.+?)\s+\|QID\|([\d\.]+)\|\s*\|N\|(.+?)\|', line)
         if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse ACCEPT",line,"high"); return None
         title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s); codes=self.extract_special_codes(line)
-        if qid: self.found_quest_ids.add(qid)
+        if qid: 
+            self.found_quest_ids.add(qid)
+            title = self.get_authoritative_quest_title(qid, title)
         note=self.normalize_common_typos(note)
         map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
         coords=self.coords_obj(self.extract_all_coords(note), map_name)
@@ -345,7 +588,7 @@ class TourGuideConverter:
         if npc: self.found_npcs.add(npc)
         if not npc and not codes.get('use_item') and not re.search(r'\bUse\b.*\bto accept\b', note, flags=re.I):
             self.log_issue(ln,"MISSING_NPC","No NPC for ACCEPT",line,"medium")
-        return QuestStep("ACCEPT", self.clean_title(title), qid, coords, {"name":npc} if npc else None, note,
+        return QuestStep("ACCEPT", title, qid, coords, {"name":npc} if npc else None, note,
                          class_restriction=codes.get('class'), race_restriction=codes.get('race'),
                          optional=codes.get('optional',False), prerequisite=codes.get('prerequisite'), line_num=ln)
 
@@ -353,14 +596,16 @@ class TourGuideConverter:
         m=re.match(r'^C\s+(.+?)\s+\|QID\|([\d\.]+)\|\s*\|N\|(.+?)\|', line)
         if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse COMPLETE",line,"high"); return None
         title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s); codes=self.extract_special_codes(line)
-        if qid: self.found_quest_ids.add(qid)
+        if qid: 
+            self.found_quest_ids.add(qid)
+            title = self.get_authoritative_quest_title(qid, title)
         note=self.normalize_common_typos(note)
         map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
         coords=self.coords_obj(self.extract_all_coords(note), map_name)
         if map_name: self.found_zones.add(map_name)
         objectives=self.extract_objectives_from_note(note,codes)
         if not objectives: self.log_issue(ln,"MISSING_OBJECTIVES","No objectives parsed",line,"medium")
-        return QuestStep("COMPLETE", self.clean_title(title), qid, coords, None, note, objectives,
+        return QuestStep("COMPLETE", title, qid, coords, None, note, objectives,
                          class_restriction=codes.get('class'), race_restriction=codes.get('race'),
                          optional=codes.get('optional',False), as_you_go=codes.get('as_you_go',False), line_num=ln)
 
@@ -368,7 +613,9 @@ class TourGuideConverter:
         m=re.match(r'^T\s+(.+?)\s+\|QID\|([\d\.]+)\|\s*\|N\|(.+?)\|', line)
         if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse TURNIN",line,"high"); return None
         title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s); codes=self.extract_special_codes(line)
-        if qid: self.found_quest_ids.add(qid)
+        if qid: 
+            self.found_quest_ids.add(qid)
+            title = self.get_authoritative_quest_title(qid, title)
         note=self.normalize_common_typos(note)
         map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
         coords=self.coords_obj(self.extract_all_coords(note), map_name)
@@ -376,7 +623,7 @@ class TourGuideConverter:
         if map_name: self.found_zones.add(map_name)
         if npc: self.found_npcs.add(npc)
         if not npc: self.log_issue(ln,"MISSING_NPC","No NPC for TURNIN",line,"medium")
-        return QuestStep("TURNIN", self.clean_title(title), qid, coords, {"name":npc} if npc else None, note,
+        return QuestStep("TURNIN", title, qid, coords, {"name":npc} if npc else None, note,
                          class_restriction=codes.get('class'), race_restriction=codes.get('race'),
                          optional=codes.get('optional',False), line_num=ln)
 
@@ -386,7 +633,9 @@ class TourGuideConverter:
         title,qid_s,note=m.groups()
         qid=self.parse_quest_id(qid_s) if qid_s else None
         codes=self.extract_special_codes(line)
-        if qid: self.found_quest_ids.add(qid)
+        if qid: 
+            self.found_quest_ids.add(qid)
+            # Don't override travel destination title with quest title
         note=self.normalize_common_typos(note)
         map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
         coords=self.coords_obj(self.extract_all_coords(note), map_name)
@@ -452,23 +701,77 @@ class TourGuideConverter:
         npc=self.extract_npc(note);  item_id=codes.get('loot_item_id')
         if npc: self.found_npcs.add(npc)
         if item_id:
+            # Validate and correct item
+            item_id, corrected_name = self.validate_and_correct_item(item_id, item_name.strip(), ln, line)
             self.found_item_ids.add(item_id)
-            self._record_item_mapping(item_id, item_name.strip(), ln, line, "buy")
+            self._record_item_mapping(item_id, corrected_name, ln, line, "buy")
+            item_name = corrected_name
         return QuestStep("BUY", f"Buy {item_name.strip()}", qid, coords, {"name":npc} if npc else None, note,
                          item_id=item_id, item_name=item_name.strip(),
                          class_restriction=codes.get('class'), race_restriction=codes.get('race'),
                          line_num=ln)
 
     def convert_kill_step(self, line, ln):
+        """Convert K-lines, now properly handling |L| codes for loot objectives."""
         m=re.match(r'^K\s+(.+?)\s+(?:\|QID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
         if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse KILL",line,"low"); return None
         label,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s) if qid_s else None; codes=self.extract_special_codes(line)
+        
+        if qid:
+            self.found_quest_ids.add(qid)
+            # Get authoritative title for the quest
+            title = self.get_authoritative_quest_title(qid, f"Kill {label.strip()}")
+        else:
+            title = f"Kill {label.strip()}"
+        
         note=self.normalize_common_typos(note)
         map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
         coords=self.coords_obj(self.extract_all_coords(note), map_name)
+        
+        # Parse kill amount from note
         amt=1; m2=re.search(r'\b[Kk]ill\s+(\d+)\s+', note);  amt=int(m2.group(1)) if m2 else 1
-        obj={"kind":"kill","label":label.strip(),"target":amt}
-        return QuestStep("COMPLETE", f"Kill {label.strip()}", qid, coords, None, note, [obj],
+        
+        # Start with kill objective
+        objectives = [{"kind":"kill","label":label.strip(),"target":amt}]
+        
+        # Check if there's a loot requirement (|L| code)
+        if 'loot_item_id' in codes and 'loot_amount' in codes:
+            # Extract item name from note
+            item_name = None
+            # Look for "Collect N Item" pattern
+            collect_m = re.search(r'\b[Cc]ollect\s+\d+\s+([A-Za-z][A-Za-z\s\'-]+?)(?:\s+from|\s*$)', note)
+            if collect_m:
+                item_name = collect_m.group(1).strip()
+            else:
+                # Try to find item name in other patterns
+                collect_m = re.search(r'\b(?:[Cc]ollect|[Gg]et|[Oo]btain)\s+([A-Za-z][A-Za-z\s\'-]+)', note)
+                if collect_m:
+                    item_name = collect_m.group(1).strip()
+            
+            # If we couldn't find item name, use the item from database
+            if not item_name and self.db_items and codes['loot_item_id'] in self.db_items:
+                item_name = self.db_items[codes['loot_item_id']]
+            elif not item_name:
+                item_name = f"Item {codes['loot_item_id']}"
+            
+            # Validate and correct item
+            item_id, corrected_name = self.validate_and_correct_item(
+                codes['loot_item_id'], item_name, ln, line
+            )
+            
+            # Add loot objective
+            loot_obj = {
+                "kind": "loot",
+                "label": corrected_name,
+                "target": codes['loot_amount'],
+                "itemId": item_id
+            }
+            objectives.append(loot_obj)
+            
+            self.found_item_ids.add(item_id)
+            self._record_item_mapping(item_id, corrected_name, ln, line, "K-line-loot")
+        
+        return QuestStep("COMPLETE", title, qid, coords, None, note, objectives,
                          class_restriction=codes.get('class'), race_restriction=codes.get('race'), line_num=ln)
 
     def convert_loot_line(self, line, ln):
@@ -486,9 +789,16 @@ class TourGuideConverter:
         )
         collect_label = collect_m.group(1).strip() if collect_m else None
         best_label = self._choose_item_label(item_name.strip(), collect_label)
+        
+        # Validate item if we have an ID
         if 'loot_item_id' in codes:
-            self.found_item_ids.add(codes['loot_item_id'])
-            self._record_item_mapping(codes['loot_item_id'], best_label, ln, line, "L-line")
+            item_id, corrected_name = self.validate_and_correct_item(
+                codes['loot_item_id'], best_label, ln, line
+            )
+            best_label = corrected_name
+            self.found_item_ids.add(item_id)
+            self._record_item_mapping(item_id, corrected_name, ln, line, "L-line")
+        
         return {
             "item_name": item_name.strip(),
             "amount": int(amount),
@@ -545,7 +855,7 @@ class TourGuideConverter:
         for group in self.group_consecutive_loot_lines(loot_lines):
             if not group: continue
             qid = group[0]["base_quest_id"]
-            qtitle = self.clean_title(quest_titles.get(qid, f"Quest {qid}"))
+            qtitle = self.get_authoritative_quest_title(qid, quest_titles.get(qid, f"Quest {qid}"))
             objectives=[]
             for ld in group:
                 o=self.create_objective_from_loot_data(ld)
@@ -687,6 +997,18 @@ QuestShellGuides["{name}"] = {{
             f"- Lines Skipped: {self.stats['skipped_lines']}\n",
             f"- Issues Found: {self.stats['issues_found']}\n\n",
         ]
+        
+        # Add database stats if loaded
+        if self.db_quests or self.db_items or self.db_units:
+            parts.append("## 📚 Database Validation\n\n")
+            if self.db_quests:
+                parts.append(f"- Quests Database: {len(self.db_quests)} quests loaded\n")
+            if self.db_items:
+                parts.append(f"- Items Database: {len(self.db_items)} items loaded\n")
+            if self.db_units:
+                parts.append(f"- Units Database: {len(self.db_units)} NPCs loaded\n")
+            parts.append("\n")
+        
         if self.issues:
             parts.append("## ⚠️ Issues Requiring Review\n\n")
             for sev in sev_order:
@@ -795,6 +1117,31 @@ QuestShellGuides["{name}"] = {{
         print("✅ Conversion complete!"); print(f"📄 Output: {output_file}"); print(f"📋 README: {readme_file}")
         print(f"📊 Stats: {self.stats['converted_steps']}/{self.stats['total_lines']} lines converted"); print(f"⚠️  Issues: {self.stats['issues_found']} found")
         return output_file, readme_file
+    def parse_units_lua(self, filepath: str) -> Dict[int, str]:
+        """Parse units.lua file with pfDB structure."""
+        units: Dict[int, str] = {}
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        # pfDB["units"]["enUS"] = { ... }
+        pfdb_match = re.search(r'pfDB\["units"\]\["enUS"\]\s*=\s*\{(.*?)\n\}', content, re.DOTALL)
+        if not pfdb_match:
+            # fallback (more permissive)
+            pfdb_match = re.search(r'pfDB\["units"\]\["enUS"\]\s*=\s*\{(.*)\}', content, re.DOTALL)
+
+        if not pfdb_match:
+            print("⚠️ Could not find pfDB['units']['enUS'] in units.lua")
+            return units
+
+        units_content = pfdb_match.group(1)
+
+        for unit_id_str, unit_name in re.findall(r'\[(\d+)\]\s*=\s*"((?:[^"\\]|\\.)*)"', units_content):
+            units[int(unit_id_str)] = (
+                unit_name.replace('\\n', '\n').replace('\\"', '"').replace("\\'", "'")
+            )
+
+        return units
+
 
 def main():
     import argparse
@@ -820,6 +1167,8 @@ def main():
             conv=TourGuideConverter(); conv.convert_guide(a.input,out,name)
         except Exception as e:
             print(f"❌ Conversion failed: {e}"); sys.exit(1)
+
+
 
 if __name__=="__main__":
     main()

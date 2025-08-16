@@ -267,23 +267,33 @@ end
 
 -- ------------------------- Mini Use-Item button -------------------------
 -- Find needed item (id preferred) from step; also return a friendly name
+-- Find needed item (id preferred) from step; also return a friendly name
 local function _FindUseItemForStep(step)
     if not step then return nil, nil end
     local stype = string.upper(step.type or "")
+
     if stype == "USE_ITEM" then
-        -- prefer explicit id; fallback to name if provided
         return (step.itemId or nil), (step.itemName or nil)
     end
-    if stype == "COMPLETE" and step.objectives and type(step.objectives)=="table" then
-        local i=1
-        while step.objectives[i] do
-            local o = step.objectives[i]
-            if o and string.lower(o.kind or "")=="use_item" then
-                return (o.itemId or nil), (o.label or o.name or step.itemName or nil)
+
+    if stype == "COMPLETE" then
+        -- First: look for an objective { kind="use_item" }
+        if step.objectives and type(step.objectives)=="table" then
+            local i=1
+            while step.objectives[i] do
+                local o = step.objectives[i]
+                if o and string.lower(o.kind or "")=="use_item" then
+                    return (o.itemId or nil), (o.label or o.name or step.itemName or nil)
+                end
+                i = i + 1
             end
-            i = i + 1
+        end
+        -- Fallback: accept top-level itemId/itemName
+        if step.itemId or step.itemName then
+            return step.itemId, step.itemName
         end
     end
+
     return nil, nil
 end
 

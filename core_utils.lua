@@ -6,7 +6,7 @@
 
 QuestShell = QuestShell or {}
 -- default guide on startup
-if QuestShell.activeGuide == nil then QuestShell.activeGuide = "Night Elf 1-60" end
+if QuestShell.activeGuide == nil then QuestShell.activeGuide = "Test" end
 if QuestShell.debug == nil then QuestShell.debug = true end
 
 function QS_Print(m) if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[QuestShell]|r "..tostring(m)) end end
@@ -199,24 +199,56 @@ local function QS__LogQuestID(logIndex)
     return nil
 end
 
--- Try to pick the most likely quest-log entry for this step, based on
--- exact quest title + how many objective subjects EQUAL the labels.
+-- Try to resolve quest-log index using questId (best) or title (fallback).
+-- Works even when the guide step has NO objectives.
 local function QS__FindQuestLogIndexForStep(step)
-    if not step or not step.title then return nil end
-    local title = step.title
+    if not step then return nil end
+    local wantId   = step.questId
+    local wantTitle= step.title
+
     local entries = GetNumQuestLogEntries() or 0
-    local i, bestIdx, bestScore = 1, nil, -1
+    local bestIdx, bestScore = nil, -1
+
+    local function logQuestId(i)
+        if GetQuestLogQuestID then
+            return GetQuestLogQuestID(i)
+        end
+        if C_QuestLog and C_QuestLog.GetQuestIDForLogIndex then
+            return C_QuestLog.GetQuestIDForLogIndex(i)
+        end
+        return nil
+    end
+
+    -- (1) Exact questId match wins immediately if available on this client.
+    if wantId then
+        local i = 1
+        while i <= entries do
+            local t, _, _, _, isHeader = GetQuestLogTitle(i)
+            if not isHeader then
+                local qid = logQuestId(i)
+                if qid and qid == wantId then
+                    return i
+                end
+            end
+            i = i + 1
+        end
+    end
+
+    -- (2) Fallback: title match. If the step has objectives, prefer the log entry
+    --     whose objective subjects match the guide labels; otherwise take the first.
+    if not wantTitle or wantTitle == "" then return nil end
+
+    local i = 1
     while i <= entries do
-        local t, _, _, isHeader = GetQuestLogTitle(i)
-        if not isHeader and t == title then
+        local t, _, _, _, isHeader = GetQuestLogTitle(i)
+        if not isHeader and t == wantTitle then
             local score = 0
-            local n = GetNumQuestLeaderBoards(i) or 0
-            if step.objectives and type(step.objectives) == "table" then
+            if step.objectives and type(step.objectives) == "table" and table.getn(step.objectives) > 0 then
+                local n = GetNumQuestLeaderBoards(i) or 0
                 local j = 1
                 while j <= n do
                     local txt = GetQuestLogLeaderBoard(j, i)
                     local subj = QS__ObjectiveSubject(txt)
-                    -- compare with each label (normalized equality)
                     local k = 1
                     while step.objectives[k] do
                         local o = step.objectives[k]
@@ -229,6 +261,9 @@ local function QS__FindQuestLogIndexForStep(step)
                     end
                     j = j + 1
                 end
+            else
+                -- No guide objectives supplied → neutral score (0), first title match wins.
+                score = 0
             end
             if score > bestScore then bestScore = score; bestIdx = i end
         end
@@ -248,23 +283,25 @@ local function QS__ParseCounts(s)
 end
 
 -- Public: build objective rows. If forceComplete==true, format as x/x and mark done.
+-- Public: build objective rows. If forceComplete==true, format as x/x and mark done.
 function QS_BuildObjectiveRows(step, forceComplete)
     local rows = {}
     if not step then return rows end
 
     local idx = QS__FindQuestLogIndexForStep(step)
 
-    -- Prefer guide-defined objectives; overlay counts from log when we can match.
-    if step.objectives and type(step.objectives) == "table" and table.getn(step.objectives) > 0 then
-        local k = 1
-        while step.objectives[k] do
-            local O = step.objectives[k] or {}
-            local labelRaw = O.label or O.text or ""
-            local label = QS__NormLabel(labelRaw)
-            local target = O.target or 0
-            local cur, done = 0, false
+    -- If we have a quest-log index, mirror it (preferred path).
+    if idx then
+        -- Prefer guide-defined objectives; overlay counts from log when we can match.
+        if step.objectives and type(step.objectives) == "table" and table.getn(step.objectives) > 0 then
+            local k = 1
+            while step.objectives[k] do
+                local O = step.objectives[k] or {}
+                local labelRaw = O.label or O.text or ""
+                local label = QS__NormLabel(labelRaw)
+                local target = O.target or 0
+                local cur, done = 0, false
 
-            if idx then
                 local n = GetNumQuestLeaderBoards(idx) or 0
                 local j = 1
                 while j <= n do
@@ -279,34 +316,32 @@ function QS_BuildObjectiveRows(step, forceComplete)
                     end
                     j = j + 1
                 end
-            end
 
-            if forceComplete and target and target > 0 then
-                cur, done = target, true
-            end
+                if forceComplete and target and target > 0 then
+                    cur, done = target, true
+                end
 
-            local out
-            if labelRaw ~= "" and target and target > 0 then
-                out = labelRaw..": "..tostring(cur or 0).."/"..tostring(target)
-            else
-                out = (labelRaw ~= "" and labelRaw) or ""
-            end
+                local out
+                if labelRaw ~= "" and target and target > 0 then
+                    out = labelRaw..": "..tostring(cur or 0).."/"..tostring(target)
+                else
+                    out = (labelRaw ~= "" and labelRaw) or ""
+                end
 
-            rows[table.getn(rows)+1] = {
-                text   = out,
-                done   = done,
-                kind   = O.kind or "other",
-                cur    = cur,
-                target = target,
-                label  = labelRaw
-            }
-            k = k + 1
+                rows[table.getn(rows)+1] = {
+                    text   = out,
+                    done   = done,
+                    kind   = O.kind or "other",
+                    cur    = cur,
+                    target = target,
+                    label  = labelRaw
+                }
+                k = k + 1
+            end
+            return rows
         end
-        return rows
-    end
 
-    -- Fallback: no guide objectives → mirror quest log (old behavior).
-    if idx then
+        -- Fallback: no guide objectives → mirror quest log lines directly.
         local n = GetNumQuestLeaderBoards(idx) or 0
         local j = 1
         while j <= n do
@@ -324,6 +359,41 @@ function QS_BuildObjectiveRows(step, forceComplete)
             rows[table.getn(rows)+1] = { text = out, done = done, kind = "other", cur = nil, target = nil, label = nil }
             j = j + 1
         end
+        return rows
     end
+
+    -- === No quest-log entry yet (quest not accepted) → placeholders ===
+
+    -- (1) If guide has objectives → show ?/target or plain labels, greyed (dim).
+    if step.objectives and type(step.objectives) == "table" and table.getn(step.objectives) > 0 then
+        local k = 1
+        while step.objectives[k] do
+            local O = step.objectives[k] or {}
+            local labelRaw = O.label or O.text or ""
+            local target = O.target or nil
+            local out = labelRaw
+            if target and target > 0 then out = labelRaw..": ?/"..tostring(target) end
+            rows[table.getn(rows)+1] = {
+                text = out, done = false, kind = O.kind or "other",
+                cur = nil, target = target, label = labelRaw,
+                dim = true
+            }
+            k = k + 1
+        end
+        return rows
+    end
+
+    -- (2) If there is a top-level item → synthesize "Use: <name>", greyed.
+    if step.itemId or step.itemName then
+        local nameTxt = step.itemName or (step.itemId and ("Item ID "..tostring(step.itemId)) or "item")
+        rows[table.getn(rows)+1] = {
+            text = "Use: "..nameTxt, kind = "use_item", done = false, dim = true
+        }
+        return rows
+    end
+
+    -- (3) Otherwise → single generic placeholder, greyed.
+    local qname = step.title or "this quest"
+    rows[1] = { text = "Objectives will appear after you accept \""..qname.."\".", done = false, kind = "other", dim = true }
     return rows
 end

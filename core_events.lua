@@ -279,6 +279,7 @@ local function QS__FindNextEligibleIncomplete(steps, completedSet, fromIndex)
 end
 
 -- Find the item we should consider as "use-item" for this step (id and/or name)
+-- Find the item we should consider as "use-item" for this step (id and/or name)
 local function QS__UseItemSpecForStep(step)
     if not step then return nil, nil end
     local stype = string.upper(step.type or "")
@@ -288,18 +289,25 @@ local function QS__UseItemSpecForStep(step)
         return step.itemId, step.itemName
     end
 
-    -- COMPLETE steps with objectives including { kind="use_item", ... }
-    if stype == "COMPLETE" and step.objectives and type(step.objectives) == "table" then
-        local i = 1
-        while step.objectives[i] do
-            local o = step.objectives[i]
-            if o and string.lower(o.kind or "") == "use_item" then
-                -- Prefer ID, but fallback to label (item name)
-                return o.itemId, (o.label or step.itemName)
+    -- COMPLETE steps: accept either an objective {kind="use_item", ...} OR a top-level itemId/itemName
+    if stype == "COMPLETE" then
+        -- objectives path
+        if step.objectives and type(step.objectives) == "table" then
+            local i = 1
+            while step.objectives[i] do
+                local o = step.objectives[i]
+                if o and string.lower(o.kind or "") == "use_item" then
+                    return o.itemId, (o.label or step.itemName)
+                end
+                i = i + 1
             end
-            i = i + 1
+        end
+        -- top-level item fallback
+        if step.itemId or step.itemName then
+            return step.itemId, step.itemName
         end
     end
+
     return nil, nil
 end
 

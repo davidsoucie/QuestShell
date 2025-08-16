@@ -48,12 +48,7 @@ QuestShellGuides["Test"] = {
 
                 { type="COMPLETE", title="The Balance of Nature", questId=456,
                   coords={ x=61.0, y=43.0, map="Teldrassil" },
-                  note="Kill Young Nightsaber and Young Thistle Boar",
-                  level=2,
-                  objectives = {
-                    { kind="kill", label="Young Nightsaber", target=7 },
-                    { kind="kill", label="Young Thistle Boar", target=4 }
-                  } 
+                  note="Kill Young Nightsaber and Young Thistle Boar"
                 },
 
                 { type="TURNIN", title="The Balance of Nature", questId=456,
@@ -115,21 +110,9 @@ QuestShellGuides["Test"] = {
 
                 {
                     type="COMPLETE",
-                    title="Eat some food",
-                    objectives = {
-                        { kind="use_item", label="Tough Jerky"}
-                    },
-                    note="Eat some jerky !"
-                },
-
-                -- USE_ITEM with target requirement example (imaginary item)
-                {
-                  type="USE_ITEM",
-                  title="Use Flask at Ilthalaine",
-                  itemId=99999,
-                  itemName="Moonwell Flask",
-                  npc = { name="Conservator Ilthalaine" }, -- must be selected when using
-                  note="Target Ilthalaine and use the Moonwell Flask."
+                    title="Crown of the Earth",
+                    note="Use the Crystal Phial at the moonwell in Shadowglen (59.9, 33.1)",
+                    itemId=5185
                 },
 
                 { type="TURNIN", title="The Balance of Nature", questId=456,
