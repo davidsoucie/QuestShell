@@ -22,4 +22,5 @@ ui_steps.lua
 ui_menu.lua
 ui_options.lua
 
-guide_test.lua
+QuestShell_Guides\Alliance\Guides.xml
+QuestShell_Guides\Horde\Guides.xml

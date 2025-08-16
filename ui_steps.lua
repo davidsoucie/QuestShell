@@ -1,4 +1,16 @@
+
+-- Guide step accessor (post-chapter migration)
+local function QS_GetStepsForGuide(name)
+    local g = QuestShellGuides and QuestShellGuides[name]
+    if type(g) == "table" then
+        if g.steps then return g.steps end
+        if g.chapters and g.chapters[1] and g.chapters[1].steps then return g.chapters[1].steps end
+    end
+    return {}
+end
+
 -- =========================
+
 -- QuestShell UI — Steps
 -- Scrollable list of all steps in current chapter (with zebra rows, checkboxes)
 -- Compatibility: Vanilla/Turtle (Lua 5.0)

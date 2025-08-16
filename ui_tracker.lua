@@ -1,4 +1,5 @@
 -- =========================
+
 -- QuestShell UI — Tracker
 -- Compact tracker for the current step with: header, checkbox, rows with icons.
 -- Compatibility: Vanilla/Turtle (Lua 5.0)

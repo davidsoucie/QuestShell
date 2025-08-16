@@ -1,4 +1,5 @@
 -- =========================
+
 -- QuestShell UI — Gear Menu (Guides & Chapters)
 -- Modal menu listing guides on the left and chapters on the right.
 -- =========================
@@ -99,58 +100,48 @@ end
 
 
 local function RefreshChaptersForGuide(name)
+    
     if not chScroll then return end
     local parent = chScroll:GetScrollChild()
-    local chapters = {}
-    if QS_ChapterCount and QS_ChapterMeta then
-        if name ~= (QuestShell and QuestShell.activeGuide) then
-            local g = QuestShellGuides and QuestShellGuides[name]
-            if g and g.chapters then chapters = g.chapters
-            else
-                local steps = (g and g.steps) or g or {}
-                chapters = { { title = name, steps = steps } }
-            end
-        else
-            local n = QS_ChapterCount(name)
-            local i = 1
-            while i <= n do
-                chapters[i] = QS_ChapterMeta(i)
-                i = i + 1
-            end
-        end
+    if not parent then return end
+
+    parent:SetWidth(260)
+
+    -- ensure rows table
+    parent._rows = parent._rows or {}
+    local rows = parent._rows
+
+    -- create or reuse a single button that opens the guide
+    local b = rows[1]
+    if not b then
+        b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+        rows[1] = b
+        b:SetHeight(22)
+        b:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, -4)
+        b:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
+        b:SetScript("OnClick", function()
+            if QuestShell and QuestShell.LoadGuide then QuestShell.LoadGuide(b._guide) end
+            -- no chapters anymore
+        end)
     end
 
-    local y = -4
-    local rows = parent._rows or {}
-    local i = 1
-    while i <= table.getn(chapters) do
-        local b = rows[i]
-        if not b then
-            b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-            rows[i] = b
-            b:SetHeight(20)
-            b:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
-            b:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
-            b:SetText("...")
-            b:SetScript("OnClick", function()
-                if QuestShell and QuestShell.LoadGuide then QuestShell.LoadGuide(b._guide) end
-                if QuestShell and QuestShell.SetChapter then QuestShell.SetChapter(b._ch) end
-            end)
-        end
-        local meta = chapters[i]
-        local title = (meta and meta.title) or ("Chapter "..i)
-        local minL = meta and meta.minLevel or "?"
-        local maxL = meta and meta.maxLevel or "?"
-        b:SetText(i..". "..title.."  "..tostring(minL).."-"..tostring(maxL))
-        b._guide = name
-        b._ch = i
-        b:Show()
-        y = y - 22
+    local g = QuestShellGuides and QuestShellGuides[name]
+    local title = (g and g.title) or name or "Guide"
+    local minL = (g and g.minLevel) or "?"
+    local maxL = (g and g.maxLevel) or "?"
+
+    b:SetText(title.."  "..tostring(minL).."-"..tostring(maxL))
+    b._guide = name
+    b:Show()
+
+    -- hide any extra rows
+    local i = 2
+    while rows[i] do
+        rows[i]:Hide()
         i = i + 1
     end
-    while rows[i] do rows[i]:Hide(); i = i + 1 end
-    parent._rows = rows
-    parent:SetHeight(-y + 4)
+
+    parent:SetHeight(28)
 end
 
 local function RefreshGuides()
