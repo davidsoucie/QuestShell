@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Stranglethorn_36_37.lua
--- Converted from TourGuide format on 2025-08-16 19:50:36
+-- Converted from TourGuide format on 2025-08-16 22:16:20
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -82,7 +82,7 @@ QuestShellGuides["QS_Stranglethorn_36_37"] = {
     { type="TURNIN", title="Panther Mastery", questId=192, coords={ x=35.58, y=10.57 }, npc = { name="Erlgadin" }, note="Sir S. J. Erlgadin in Nesingwary's Expedition (35.58, 10.57)" },
     { type="ACCEPT", title="Panther Mastery", questId=193, coords={ x=35.58, y=10.57 }, npc = { name="Erlgadin" }, note="Sir S. J. Erlgadin in Nesingwary's Expedition (35.58, 10.57)" },
     { type="COMPLETE", title="Supply and Demand", questId=575, coords={ x=34.12, y=9.7 }, note="Kill River Crocolisk and collect 2 Large River Crocolisk Skin Stranglethorn Vale (34.12, 9.70)" },
-    { type="COMPLETE", title="Singing Blue Shards", questId=605, itemId=3918, itemCount=5, coords={ x=37.0, y=8.0 }, note="Find Stone Maw Basilisk and collect some Singing Crystal Shard, you can complete this later, tick this step if you can't find crocs The Savage Coast (37, 8)" },
+    { type="COMPLETE", title="Singing Blue Shards", questId=605, coords={ x=37.0, y=8.0 }, note="Find Stone Maw Basilisk and collect some Singing Crystal Shard, you can complete this later, tick this step if you can't find crocs The Savage Coast (37, 8)" },
     { type="TRAVEL", coords={ x=33.9, y=15.48 }, note="Travel to Tkashi Ruins (33.90, 15.48)" },
     { type="COMPLETE", title="Bloodscalp Ears", questId=189, coords={ x=33.9, y=15.48 }, note="Kill Bloodscalp trolls Tkashi Ruins and Bal'lal Ruins (33.90, 15.48) (29.55, 19.53)" },
     { type="TRAVEL", coords={ x=21.77, y=22.04 }, note="Travel to The Savage Coast (21.77, 22.04)" },

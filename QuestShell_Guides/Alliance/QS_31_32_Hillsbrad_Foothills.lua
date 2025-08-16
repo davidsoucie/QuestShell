@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Hillsbrad_Foothills_31_32.lua
--- Converted from TourGuide format on 2025-08-16 19:50:35
+-- Converted from TourGuide format on 2025-08-16 22:16:18
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

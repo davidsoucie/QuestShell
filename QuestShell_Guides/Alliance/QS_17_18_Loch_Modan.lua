@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Loch_Modan_17_18.lua
--- Converted from TourGuide format on 2025-08-16 19:50:31
+-- Converted from TourGuide format on 2025-08-16 22:16:14
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

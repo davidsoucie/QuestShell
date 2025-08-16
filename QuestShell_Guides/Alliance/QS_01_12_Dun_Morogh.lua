@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Dun_Morogh_1_12.lua
--- Converted from TourGuide format on 2025-08-16 19:50:29
+-- Converted from TourGuide format on 2025-08-16 22:16:12
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -10,7 +10,6 @@ QuestShellGuides["QS_Dun_Morogh_1_12"] = {
   next     = "Darkshore (12-17)",
   nextKey  = "QS_Darkshore_12_17",
   faction  = "Alliance",
-  startingRace = { "Dwarf, Gnome" },
   minLevel = 1,
   maxLevel = 12,
   steps = {

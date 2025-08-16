@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Stonetalon_Mountains_22_23.lua
--- Converted from TourGuide format on 2025-08-16 19:50:32
+-- Converted from TourGuide format on 2025-08-16 22:16:16
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

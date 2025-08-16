@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Winterspring_59_60.lua
--- Converted from TourGuide format on 2025-08-16 19:50:45
+-- Converted from TourGuide format on 2025-08-16 22:16:29
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

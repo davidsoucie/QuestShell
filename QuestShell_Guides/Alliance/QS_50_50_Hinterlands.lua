@@ -1,6 +1,6 @@
 -- =========================
 -- QS_The_Hinterlands_50_50.lua
--- Converted from TourGuide format on 2025-08-16 19:50:41
+-- Converted from TourGuide format on 2025-08-16 22:16:25
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

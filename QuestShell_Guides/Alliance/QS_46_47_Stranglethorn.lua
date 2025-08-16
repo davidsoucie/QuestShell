@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Stranglethorn_46_47.lua
--- Converted from TourGuide format on 2025-08-16 19:50:40
+-- Converted from TourGuide format on 2025-08-16 22:16:24
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

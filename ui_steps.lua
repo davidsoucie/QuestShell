@@ -1,4 +1,3 @@
-
 -- Guide step accessor (post-chapter migration)
 local function QS_GetStepsForGuide(name)
     local g = QuestShellGuides and QuestShellGuides[name]
@@ -10,7 +9,6 @@ local function QS_GetStepsForGuide(name)
 end
 
 -- =========================
-
 -- QuestShell UI — Steps
 -- Scrollable list of all steps in current chapter (with zebra rows, checkboxes)
 -- Compatibility: Vanilla/Turtle (Lua 5.0)
@@ -19,8 +17,10 @@ end
 --   QuestShellUI.ToggleList()
 --   QuestShellUI.UpdateList(steps, currentIndex, completedMap)
 -- Notes:
---   - Uses absolute positioning instead of height autos to avoid 1.12 quirks.
---   - Fixed indents for bullet/icon/text to keep columns aligned.
+--   - Absolute positioning to avoid 1.12 autosizing quirks.
+--   - Fixed indents for bullet/icon/text for aligned columns.
+--   - PERF: cached text heights (width|text).
+--   - FIX: hard refresh scrollbar min/max to remove empty trailing scroll when guide shrinks.
 -- =========================
 
 QuestShellUI = QuestShellUI or {}
@@ -84,6 +84,11 @@ local listFrame, header, headerTitle, headerLevelFS, headerStepFS
 local scroll, scrollChild, rowPool, meterFS
 local _lastSteps, _lastCurrentIndex, _lastCompletedMap
 
+-- PERF: cache text heights
+local _heightCache = {}
+local _cachedWidthKey = nil
+local function ClearHeightCache() _heightCache = {} end
+
 -- ------------------------ Helpers ------------------------
 local function ClampAndPlace(f, x, y, fw, fh)
     if not f or not UIParent then return end
@@ -100,18 +105,68 @@ local function ClampAndPlace(f, x, y, fw, fh)
 end
 
 local function MeasureTextHeight(text, width)
+    local w = math.max(1, width or 200)
+    local key = tostring(w).."|"..(text or "")
+    local h = _heightCache[key]
+    if h then return h end
+
     meterFS:ClearAllPoints()
     meterFS:SetPoint("TOPLEFT", UIParent, "TOPLEFT", -2000, 2000)
     meterFS:SetAlpha(0)
     meterFS:Show()
-    meterFS:SetWidth(math.max(1, width or 200))
+    meterFS:SetWidth(w)
     meterFS:SetText(text or "")
-    local h = meterFS:GetHeight() or 0
+    h = meterFS:GetHeight() or 0
     if h <= 0 then
         local _, lh = meterFS:GetFont(); if not lh or lh <= 0 then lh = 12 end
         local _, nl = string.gsub(text or "", "\n", ""); h = (nl+1)*lh
     end
-    return math.ceil(h)
+    h = math.ceil(h)
+    _heightCache[key] = h
+    return h
+end
+
+-- Hard refresh of the UIPanelScrollFrame scrollbar (1.12-safe)
+local function _RefreshScrollBar()
+    if not scroll or not scrollChild then return end
+    local viewH = scroll:GetHeight() or 1
+    local contentH = scrollChild:GetHeight() or 1
+    local range = contentH - viewH
+    if range < 0 then range = 0 end
+
+    -- grab the template scrollbar (by name in 1.12)
+    local sb = (getglobal and getglobal("QuestShellStepsScrollScrollBar")) or nil
+    if sb and sb.SetMinMaxValues then
+        sb:SetMinMaxValues(0, range)
+        if range == 0 then
+            sb:SetValue(0)
+            if scroll.SetVerticalScroll then scroll:SetVerticalScroll(0) end
+            -- hide arrows when no scrolling is possible
+            local up = getglobal and getglobal("QuestShellStepsScrollScrollBarScrollUpButton")
+            local down = getglobal and getglobal("QuestShellStepsScrollScrollBarScrollDownButton")
+            if up and up.Hide then up:Hide() end
+            if down and down.Hide then down:Hide() end
+        else
+            -- make sure arrows are visible when scrolling is possible
+            local up = getglobal and getglobal("QuestShellStepsScrollScrollBarScrollUpButton")
+            local down = getglobal and getglobal("QuestShellStepsScrollScrollBarScrollDownButton")
+            if up and up.Show then up:Show() end
+            if down and down.Show then down:Show() end
+            -- clamp current value inside new range
+            local cur = sb:GetValue() or 0
+            if cur > range then
+                sb:SetValue(range)
+                if scroll.SetVerticalScroll then scroll:SetVerticalScroll(range) end
+            end
+        end
+    else
+        -- fallback: at least clamp the scroll position
+        if scroll.SetVerticalScroll then
+            local cur = scroll:GetVerticalScroll() or 0
+            if range == 0 then scroll:SetVerticalScroll(0)
+            elseif cur > range then scroll:SetVerticalScroll(range) end
+        end
+    end
 end
 
 -- ------------------------ Row factory ------------------------
@@ -178,6 +233,14 @@ local function ResizeRowsToWidth()
     local w = scrollChild:GetWidth() or 322
     local contentW = w - (CHECKBOX_W + 12)
     local textW = contentW - TEXT_X
+
+    -- Invalidate height cache if the width changed
+    local newKey = tostring(textW)
+    if newKey ~= _cachedWidthKey then
+        ClearHeightCache()
+        _cachedWidthKey = newKey
+    end
+
     local i = 1
     while rowPool and rowPool[i] do
         local r = rowPool[i]
@@ -236,8 +299,6 @@ function SetHeaderFromChapter()
     headerStepFS:SetText("Step "..tostring(cur).."/"..tostring(total))
 end
 
--- ------------------------ Build visual rows for a single step ------------------------
-
 -- ------------------------ Build visual rows via central registry ------------------------
 local function BuildRows(step, fallbackTitle, forceComplete)
     if QS_BuildVisualRows then
@@ -248,7 +309,6 @@ local function BuildRows(step, fallbackTitle, forceComplete)
     return { { bullet=false, icon=nil, text=note } }
 end
 
-
 -- ------------------------ Render (absolute positioning) ------------------------
 local function RebuildContent(steps, currentIndex, completedMap)
     local total = (steps and table.getn(steps)) or 0
@@ -256,7 +316,6 @@ local function RebuildContent(steps, currentIndex, completedMap)
     local w = scrollChild:GetWidth() or 322
     local contentW = w - (CHECKBOX_W + 12)
     local textW = math.max(1, contentW - TEXT_X)
-
 
     local i, j = 1, 1
     while i <= total do
@@ -267,7 +326,6 @@ local function RebuildContent(steps, currentIndex, completedMap)
             rowPool = rowPool or {}; rowPool[j] = row
             row._index = i       -- IMPORTANT: keep the real step index
 
-            local step = steps[i]
             local isCompleted = (completedMap and completedMap[i]) or false
             row.chk:SetChecked(isCompleted)
 
@@ -339,15 +397,19 @@ local function RebuildContent(steps, currentIndex, completedMap)
 
     while rowPool and rowPool[j] do rowPool[j]:Hide(); j = j + 1 end
 
+    if y < 1 then y = 1 end
     scrollChild:SetHeight(y)
+
+    -- HARD refresh scrollbar so no leftover range sticks around
+    _RefreshScrollBar()
+
     SetHeaderFromChapter()
 end
 
 local function Relayout()
     if not listFrame or not _lastSteps then return end
-    if QuestShellUI and QuestShellUI.UpdateList then
-        QuestShellUI.UpdateList(_lastSteps, _lastCurrentIndex, _lastCompletedMap)
-    end
+    ResizeRowsToWidth()
+    RebuildContent(_lastSteps, _lastCurrentIndex, _lastCompletedMap)
 end
 
 -- ------------------------ Create frame ------------------------
@@ -376,6 +438,7 @@ local function CreateList()
         QuestShellDB.ui.listW, QuestShellDB.ui.listH = listFrame:GetWidth(), listFrame:GetHeight()
         if scrollChild then scrollChild:SetWidth(listFrame:GetWidth() - 38) end
         Relayout()
+        _RefreshScrollBar()
     end)
 
     local x = QuestShellDB.ui.listX or 560
@@ -439,6 +502,21 @@ local function CreateList()
     scrollChild:SetHeight(1)
     scrollChild:SetWidth((QuestShellDB.ui.listW or 360) - 38)
 
+    -- Give mouse wheel some love (optional)
+    if scroll.EnableMouseWheel then
+        scroll:EnableMouseWheel(true)
+        scroll:SetScript("OnMouseWheel", function()
+            local sb = getglobal and getglobal("QuestShellStepsScrollScrollBar")
+            if not sb then return end
+            local v = (sb:GetValue() or 0) - (arg1 or 0) * 30
+            local _, max = sb:GetMinMaxValues()
+            if v < 0 then v = 0 end
+            if max and v > max then v = max end
+            sb:SetValue(v)
+            if scroll.SetVerticalScroll then scroll:SetVerticalScroll(v) end
+        end)
+    end
+
     local sGrip = CreateFrame("Button", "QuestShellStepsSize", listFrame)
     sGrip:SetWidth(16); sGrip:SetHeight(16)
     sGrip:SetPoint("BOTTOMRIGHT", listFrame, "BOTTOMRIGHT", -4, 4)
@@ -449,6 +527,7 @@ local function CreateList()
         listFrame:StopMovingOrSizing()
         if scrollChild then scrollChild:SetWidth(listFrame:GetWidth() - 38) end
         Relayout()
+        _RefreshScrollBar()
     end)
 
     listFrame:Show()
@@ -464,9 +543,17 @@ end
 function QuestShellUI.UpdateList(steps, currentIndex, completedMap)
     if not listFrame then CreateList() end
     _lastSteps, _lastCurrentIndex, _lastCompletedMap = steps, currentIndex, completedMap
-    RebuildContent(steps, currentIndex, completedMap)
+
+    -- Reset scroll first (so scrollbar value is sane before recompute)
+    local sb = (getglobal and getglobal("QuestShellStepsScrollScrollBar")) or nil
+    if sb and sb.SetValue then sb:SetValue(0) end
+    if scroll and scroll.SetVerticalScroll then scroll:SetVerticalScroll(0) end
+
+    ClearHeightCache()
+    RebuildContent(steps, currentIndex, completedMap) -- this will call _RefreshScrollBar again
 end
 
+-- Build once at VARIABLES_LOADED so /qs steps is instant
 local boot = CreateFrame("Frame")
 boot:RegisterEvent("VARIABLES_LOADED")
 boot:SetScript("OnEvent", function() CreateList() end)

@@ -462,11 +462,7 @@ class TourGuideConverter:
             qid = extract_qid(line)
             note = extract_note(line)
             coords = first_coords(line)
-            item_id = extract_item_use(line)
-            loot_item, loot_count = extract_loot(line)
-            if loot_item and not item_id:
-                item_id = loot_item
-            item_count = loot_count
+            item_id = extract_item_use(line)            
             klass = extract_class(line)
             race = extract_race(line)
 
@@ -512,7 +508,6 @@ class TourGuideConverter:
                 npc=npc,
                 note=note,
                 itemId=item_id,
-                itemCount=item_count,
                 destination=destination,
                 klass=klass,
                 race=race,

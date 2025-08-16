@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Arathi_Highlands_37_38.lua
--- Converted from TourGuide format on 2025-08-16 19:50:37
+-- Converted from TourGuide format on 2025-08-16 22:16:20
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

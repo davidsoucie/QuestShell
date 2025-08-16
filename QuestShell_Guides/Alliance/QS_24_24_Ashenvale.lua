@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Ashenvale_24_24.lua
--- Converted from TourGuide format on 2025-08-16 19:50:33
+-- Converted from TourGuide format on 2025-08-16 22:16:16
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -28,7 +28,7 @@ QuestShellGuides["QS_Ashenvale_24_24"] = {
     { type="TURNIN", title="Culling the Threat", questId=1054, coords={ x=36.59, y=49.59 }, npc = { name="Raene Wolfrunner" }, note="Raene Wolfrunner in Astranaar (36.59, 49.59)" },
     { type="TRAVEL", coords={ x=49.81, y=67.2 }, note="Travel to Silverwind Refuge (49.81, 67.20)" },
     { type="ACCEPT", title="Elemental Bracers", questId=1016, coords={ x=49.81, y=67.2 }, npc = { name="Sentinel Velene Starstrike" }, note="Sentinel Velene Starstrike in Silverwind Refuge (49.81, 67.20)" },
-    { type="COMPLETE", title="Elemental Bracers", questId=1016, itemId=12220, itemCount=5, coords={ x=49.4, y=71.1 }, note="Kill Befouled Water Elemental until you collect 5 Intact Elemental Bracer in Mystral Lake (49.4, 71.1) | Use the Divining Scroll after collect 5 Intact Elemental Bracer from Befouled Water Elemental in Mystral Lake (49, 70)" },
+    { type="COMPLETE", title="Elemental Bracers", questId=1016, itemId=5456, coords={ x=49.4, y=71.1 }, note="Kill Befouled Water Elemental until you collect 5 Intact Elemental Bracer in Mystral Lake (49.4, 71.1) | Use the Divining Scroll after collect 5 Intact Elemental Bracer from Befouled Water Elemental in Mystral Lake (49, 70)" },
     { type="TURNIN", title="Elemental Bracers", questId=1016, coords={ x=49.81, y=67.2 }, npc = { name="Sentinel Velene Starstrike" }, note="Sentinel Velene Starstrike in Silverwind Refuge (49.81, 67.20)" },
     { type="NOTE", note="Tick to continue to the next guide" },
   }

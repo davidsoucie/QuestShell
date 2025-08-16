@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Alterac_Mountains_36_37.lua
--- Converted from TourGuide format on 2025-08-16 19:50:36
+-- Converted from TourGuide format on 2025-08-16 22:16:20
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

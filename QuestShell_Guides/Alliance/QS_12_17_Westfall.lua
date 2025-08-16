@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Westfall_12_17.lua
--- Converted from TourGuide format on 2025-08-16 19:50:30
+-- Converted from TourGuide format on 2025-08-16 22:16:14
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -77,7 +77,7 @@ QuestShellGuides["QS_Westfall_12_17"] = {
     { type="ACCEPT", title="Westfall Stew", questId=38, coords={ x=56.4, y=30.51 }, npc = { name="Salma Saldean" }, note="Salma Saldean in Saldean's Farm (56.40, 30.51)" },
     { type="ACCEPT", title="Goretusk Liver Pie", questId=22, coords={ x=56.23, y=30.89 }, npc = { name="Salma Saldean" }, note="Salma Saldean in Saldean's Farm (56.23, 30.89)" },
     { type="ACCEPT", title="The Killing Fields", questId=9, coords={ x=56.0, y=31.2 }, npc = { name="Farmer Saldean" }, note="Farmer Saldean in Saldean's Farm (56.0, 31.2)" },
-    { type="COMPLETE", title="Poor Old Blanchy", questId=151, itemId=1528, itemCount=4, note="Start collecting Handful of Oats from Sack of Oats on the ground in Saldean's Farm. Try to get 3-4 Handful of Oats and tick this step to complete later (56.9, 19,3)" },
+    { type="COMPLETE", title="Poor Old Blanchy", questId=151, note="Start collecting Handful of Oats from Sack of Oats on the ground in Saldean's Farm. Try to get 3-4 Handful of Oats and tick this step to complete later (56.9, 19,3)" },
     { type="NOTE", note="Always kill and loot Young Fleshripper and Young Goretusk you come across to collect 8 Goretusk Liver, 3 Goretusk Snout and 3 Stringy Vulture Meat, these items have low drop rate" },
     { type="TRAVEL", coords={ x=56.3, y=47.6 }, note="Travel to Sentinel Hill (56.3, 47.6)" },
     { type="TURNIN", title="Report to Gryan Stoutmantle", questId=109, coords={ x=56.3, y=47.6 }, npc = { name="Gryan Stoutmantle" }, note="Gryan Stoutmantle in Sentinel Hill (56.3, 47.6)" },
@@ -106,7 +106,7 @@ QuestShellGuides["QS_Westfall_12_17"] = {
     { type="COMPLETE", title="Poor Old Blanchy", questId=151, coords={ x=46.03, y=38.32 }, note="Collect 8 Handful of Oats from Sack of Oats on the ground in Saldean's Farm and The Molsen Farm (46.03, 38.32) (56.9, 19,3)" },
     { type="TURNIN", title="Poor Old Blanchy", questId=151, coords={ x=59.91, y=19.37 }, npc = { name="Verna Furlbrow" }, note="Verna Furlbrow in The Jansen Stead (59.91, 19.37)" },
     { type="COMPLETE", title="Westfall Stew", questId=38, coords={ x=56.24, y=35.47 }, note="Kill Harvest Golem and collect 3 Okra in Saldean's Farm. Also collect 5 Hops for a later quest (56.24, 35.47)" },
-    { type="COMPLETE", title="Dry Times", questId=116, itemId=1274, itemCount=5, coords={ x=56.24, y=35.47 }, note="Kill Harvest Golem and collect 5 Okra for a later quest in Saldean's Farm (56.24, 35.47)" },
+    { type="COMPLETE", title="Dry Times", questId=116, coords={ x=56.24, y=35.47 }, note="Kill Harvest Golem and collect 5 Okra for a later quest in Saldean's Farm (56.24, 35.47)" },
     { type="NOTE", note="Kill Young Fleshripper and Young Goretusk you come across to collect 8 Goretusk Liver, 3 Goretusk Snout and 3 Stringy Vulture Meat, these items have low drop rate" },
     { type="COMPLETE", title="Patrolling Westfall", questId=102, coords={ x=56.9, y=13.43 }, note="Kill Gnolls near The Jansen Stead and collect 8 Gnoll Paw (56.90, 13.43)" },
     { type="NOTE", note="Kill Murlocs in Longshore and collect 3 Murloc Eye (55.61, 9.02)", coords={ x=55.61, y=9.02 } },
@@ -178,7 +178,7 @@ QuestShellGuides["QS_Westfall_12_17"] = {
     { type="COMPLETE", title="The Defias Brotherhood", questId=142, coords={ x=45.72, y=68.02 }, note="Kill Defias Messenger and collect A Mysterious Message, he should be near the road entrance to Moonbrook (45.72, 68.02)" },
     { type="TRAVEL", coords={ x=30.02, y=86.0 }, note="Travel to Westfall Lighthouse (30.02, 86.00)" },
     { type="ACCEPT", title="Keeper of the Flame", questId=103, coords={ x=30.02, y=86.0 }, npc = { name="Captain Grayson" }, note="Captain Grayson in Westfall Lighthouse (30.02, 86.00)" },
-    { type="COMPLETE", title="Keeper of the Flame", questId=103, itemId=814, itemCount=5, coords={ x=50.94, y=21.84 }, note="Kill 20 Harvest Watcher in the 3 farms and collect 5 Flask of Oil for a later quest (50.94, 21.84) (44.73, 35.25) (53.41, 31.97)" },
+    { type="COMPLETE", title="Keeper of the Flame", questId=103, coords={ x=50.94, y=21.84 }, note="Kill 20 Harvest Watcher in the 3 farms and collect 5 Flask of Oil for a later quest (50.94, 21.84) (44.73, 35.25) (53.41, 31.97)" },
     { type="TURNIN", title="Keeper of the Flame", questId=103, coords={ x=29.97, y=85.98 }, npc = { name="Captain Grayson" }, note="Captain Grayson in Westfall Lighthouse (29.97, 85.98)" },
     { type="TRAVEL", coords={ x=25.91, y=47.72 }, note="Travel to Longshore (25.91, 47.72)" },
     { type="TURNIN", title="Captain Sander's Hidden Treasure", questId=136, coords={ x=25.91, y=47.72 }, npc = { name="Captain's" }, note="Captain's footlocker in Longshore (25.91, 47.72)" },

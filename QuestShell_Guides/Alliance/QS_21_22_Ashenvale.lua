@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Ashenvale_21_22.lua
--- Converted from TourGuide format on 2025-08-16 19:50:32
+-- Converted from TourGuide format on 2025-08-16 22:16:15
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

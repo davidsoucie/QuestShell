@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Elwynn_Forest_1_12.lua
--- Converted from TourGuide format on 2025-08-16 19:50:29
+-- Converted from TourGuide format on 2025-08-16 22:16:13
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -10,7 +10,6 @@ QuestShellGuides["QS_Elwynn_Forest_1_12"] = {
   next     = "Westfall (12-17)",
   nextKey  = "QS_Westfall_12_17",
   faction  = "Alliance",
-  startingRace = { "Human" },
   minLevel = 1,
   maxLevel = 12,
   steps = {
@@ -165,7 +164,7 @@ QuestShellGuides["QS_Elwynn_Forest_1_12"] = {
     { type="ACCEPT", title="Westfall Stew", questId=38, coords={ x=56.4, y=30.51 }, npc = { name="Salma Saldean" }, note="Salma Saldean in Saldean's Farm (56.40, 30.51)" },
     { type="ACCEPT", title="Goretusk Liver Pie", questId=22, coords={ x=56.23, y=30.89 }, npc = { name="Salma Saldean" }, note="Salma Saldean in Saldean's Farm (56.23, 30.89)" },
     { type="ACCEPT", title="The Killing Fields", questId=9, coords={ x=56.09, y=31.55 }, npc = { name="Farmer Saldean" }, note="Farmer Saldean in Saldean's Farm (56.09, 31.55)" },
-    { type="COMPLETE", title="Poor Old Blanchy", questId=151, itemId=1528, itemCount=4, note="Start collecting Handful of Oats from Sack of Oats on the ground in Saldean's Farm. Try to get 3-4 Handful of Oats and tick this step to complete later (56.9, 19,3)" },
+    { type="COMPLETE", title="Poor Old Blanchy", questId=151, note="Start collecting Handful of Oats from Sack of Oats on the ground in Saldean's Farm. Try to get 3-4 Handful of Oats and tick this step to complete later (56.9, 19,3)" },
     { type="TRAVEL", coords={ x=56.3, y=47.6 }, note="Travel to Sentinel Hill (56.3, 47.6)" },
     { type="TURNIN", title="Report to Gryan Stoutmantle", questId=109, coords={ x=56.3, y=47.6 }, npc = { name="Gryan Stoutmantle" }, note="Gryan Stoutmantle in Sentinel Hill (56.3, 47.6)" },
     { type="ACCEPT", race="Human", title="A Swift Message", questId=6181, coords={ x=56.9, y=47.2 }, npc = { name="Quartermaster Lewis" }, note="Quartermaster Lewis in Sentinel Hill (56.9, 47.2)" },

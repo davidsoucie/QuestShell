@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Western_Plaguelands_56_57.lua
--- Converted from TourGuide format on 2025-08-16 19:50:44
+-- Converted from TourGuide format on 2025-08-16 22:16:28
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Burning_Steppes_55_56.lua
--- Converted from TourGuide format on 2025-08-16 19:50:43
+-- Converted from TourGuide format on 2025-08-16 22:16:27
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

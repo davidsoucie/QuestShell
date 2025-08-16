@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Tanaris_49_50.lua
--- Converted from TourGuide format on 2025-08-16 19:50:41
+-- Converted from TourGuide format on 2025-08-16 22:16:25
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -46,7 +46,7 @@ QuestShellGuides["QS_Tanaris_49_50"] = {
     { type="NOTE", note="Equip the Gahz'ridian Detector to help you find 30 Gahz'ridian Ornament from small sand mound around the ruins" },
     { type="TRAVEL", coords={ x=41.09, y=57.39 }, note="Travel to Dunemaul Compound (41.09, 57.39)" },
     { type="COMPLETE", title="The Dunemaul Compound", questId=5863, coords={ x=41.46, y=57.78 }, note="Kill Gor'marok the Ravager inside the cave in Dunemaul Compound (41.46, 57.78)" },
-    { type="COMPLETE", title="Rhapsody's Kalimdor Kocktail", questId=1452, itemId=6257, itemCount=3, coords={ x=42.2, y=63.78 }, note="Kill Searing Roc and collect 3 Roc Gizzard (42.2, 63.78)" },
+    { type="COMPLETE", title="Rhapsody's Kalimdor Kocktail", questId=1452, coords={ x=42.2, y=63.78 }, note="Kill Searing Roc and collect 3 Roc Gizzard (42.2, 63.78)" },
     { type="COMPLETE", title="The Dunemaul Compound", questId=5863, coords={ x=40.43, y=55.72 }, note="Kill 10 Dunemaul Brute, 10 Dunemaul Enforcer and Gor'marok the Ravager in Dunemaul Compound (40.43, 55.72) (40.56, 72.71) (47.02, 65.85)" },
     { type="TRAVEL", coords={ x=41.09, y=57.39 }, note="Travel to Dunemaul Compound (41.09, 57.39)" },
     { type="COMPLETE", title="Gahz'ridian", questId=3161, itemId=9978, coords={ x=40.43, y=55.72 }, note="Equip the Gahz'ridian Detector to find 30 Gahz'ridian Ornament all over Tanaris and especially near the Eastmoon Ruins (40.43, 55.72) (40.56, 72.71) (47.02, 65.85)" },

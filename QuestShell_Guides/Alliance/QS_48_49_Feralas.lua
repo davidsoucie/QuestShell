@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Feralas_48_49.lua
--- Converted from TourGuide format on 2025-08-16 19:50:41
+-- Converted from TourGuide format on 2025-08-16 22:16:25
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -50,9 +50,9 @@ QuestShellGuides["QS_Feralas_48_49"] = {
     { type="COMPLETE", title="Improved Quality", questId=7733, coords={ x=52.41, y=31.76 }, note="Kill Rage Scar Yeti and collect 10 Rage Scar Yeti Hide in Rage Scar Hold (52.41, 31.76)" },
     { type="COMPLETE", title="Pristine Yeti Hide", questId=7735, coords={ x=52.41, y=31.76 }, note="Kill Rage Scar Yeti until you collect Pristine Yeti Hide to start a new quest (52.41, 31.76)" },
     { type="ACCEPT", title="Pristine Yeti Hide", questId=7735, note="Use Pristine Yeti Hide to accept quest" },
-    { type="COMPLETE", title="Rhapsody's Kalimdor Kocktail", questId=1452, itemId=6258, itemCount=3, coords={ x=50.54, y=28.24 }, note="Kill Groddoc Thunderer and Ironfur Patriarch for 3 Groddoc Liver and 3 Ironfur Liver in The Twin Colossals (50.54, 28.24) | Kill Groddoc Thunderer and Ironfur Patriarch for 3 Groddoc Liver and 3 Ironfur Liver in The Twin Colossals (50.54, 28.24)" },
+    { type="COMPLETE", title="Rhapsody's Kalimdor Kocktail", questId=1452, coords={ x=50.54, y=28.24 }, note="Kill Groddoc Thunderer and Ironfur Patriarch for 3 Groddoc Liver and 3 Ironfur Liver in The Twin Colossals (50.54, 28.24) | Kill Groddoc Thunderer and Ironfur Patriarch for 3 Groddoc Liver and 3 Ironfur Liver in The Twin Colossals (50.54, 28.24)" },
     { type="ACCEPT", title="The Giant Guardian", questId=2844, coords={ x=42.38, y=22.04 }, npc = { name="Rockbiter" }, note="Rockbiter in The Twin Colossals (42.38, 22.04)" },
-    { type="COMPLETE", title="Zapped Giants", questId=7003, itemId=18956, itemCount=15, coords={ x=38.42, y=21.51 }, note="Use Zorbin's Ultra-Shrinker on Land Walker or Cliff Giant to turn them into non elites, kill them and collect 15 Miniaturization Residue in The Twin Colossals (38.42, 21.51)" },
+    { type="COMPLETE", title="Zapped Giants", questId=7003, coords={ x=38.42, y=21.51 }, note="Use Zorbin's Ultra-Shrinker on Land Walker or Cliff Giant to turn them into non elites, kill them and collect 15 Miniaturization Residue in The Twin Colossals (38.42, 21.51)" },
     { type="TRAVEL", coords={ x=38.53, y=15.75 }, note="Travel to Ruins of Ravenwind (38.53, 15.75)" },
     { type="NOTE", note="Collect Byltan Essence from the flame in Ruins of Ravenwind (38.53, 15.75)", coords={ x=38.53, y=15.75 } },
     { type="NOTE", note="Collect Lahassa Essence from the flame in Ruins of Ravenwind (37.73, 12.24)", coords={ x=37.73, y=12.24 } },

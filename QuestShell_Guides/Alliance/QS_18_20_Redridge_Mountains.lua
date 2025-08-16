@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Redridge_Mountains_18_20.lua
--- Converted from TourGuide format on 2025-08-16 19:50:31
+-- Converted from TourGuide format on 2025-08-16 22:16:15
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -56,7 +56,7 @@ QuestShellGuides["QS_Redridge_Mountains_18_20"] = {
     { type="ACCEPT", title="Underbelly Scales", questId=122, coords={ x=30.49, y=48.02 }, npc = { name="Verner Osgood" }, note="Verner Osgood in Lakeshire (30.49, 48.02)" },
     { type="ACCEPT", title="A Baying of Gnolls", questId=124, coords={ x=30.91, y=47.92 }, npc = { name="Verner Osgood" }, note="Verner Osgood in Lakeshire (30.91, 47.92)" },
     { type="TURNIN", title="Messenger to Stormwind", questId=121, coords={ x=30.0, y=44.41 }, npc = { name="Magistrate Solomon" }, note="Magistrate Solomon in Lakeshire (30.00, 44.41)" },
-    { type="COMPLETE", title="Redridge Goulash", questId=92, itemId=2296, itemCount=5, coords={ x=16.5, y=49.6 }, note="Kill Great Goretusk and collect 5 Great Goretusk Snout to the west of the lake (16.5, 49.6)" },
+    { type="COMPLETE", title="Redridge Goulash", questId=92, coords={ x=16.5, y=49.6 }, note="Kill Great Goretusk and collect 5 Great Goretusk Snout to the west of the lake (16.5, 49.6)" },
     { type="COMPLETE", title="Hilary's Necklace", questId=3741, coords={ x=19.3, y=51.8 }, note="Find Hilary's Necklace inside a mud pile underwater in the lake, check around each waypoint (19.3, 51.8) (24.1, 54.6) (26.6, 51.4) (28,56) (33.7, 55.4) (36.7, 54.3)" },
     { type="COMPLETE", title="The Lost Tools", questId=125, coords={ x=41.4, y=54.7 }, note="You can find Oslow's Toolbox in the Sunken Chest underwater (41.4, 54.7)" },
     { type="COMPLETE", title="Selling Fish", questId=127, note="Kill the Murloc Shorestriker, Murloc Minor Tidecaller and Murloc Flesheater in the water, collect 10 Spotted Sunfish<br/><b>Also keep all Murloc Fin that you find" },
@@ -69,10 +69,10 @@ QuestShellGuides["QS_Redridge_Mountains_18_20"] = {
     { type="TURNIN", title="A Free Lunch", questId=129, coords={ x=15.32, y=71.42 }, npc = { name="Guard Parker" }, note="Guard Parker in Three Corners (15.32, 71.42)" },
     { type="ACCEPT", title="Visit the Herbalist", questId=130, coords={ x=15.32, y=71.42 }, npc = { name="Guard Parker" }, note="Guard Parker in Three Corners (15.32, 71.42)" },
     { type="TRAVEL", coords={ x=12.2, y=77.99 }, note="Travel to Three Corners (12.20, 77.99)" },
-    { type="COMPLETE", title="Redridge Goulash", questId=92, itemId=1081, itemCount=5, coords={ x=12.2, y=77.99 }, note="Kill Tarantula and collect 5 Crisp Spider Meat in Three Corners (12.20, 77.99)" },
+    { type="COMPLETE", title="Redridge Goulash", questId=92, coords={ x=12.2, y=77.99 }, note="Kill Tarantula and collect 5 Crisp Spider Meat in Three Corners (12.20, 77.99)" },
     { type="TRAVEL", coords={ x=30.88, y=83.2 }, note="Travel to Lakeridge Highway (30.88, 83.20)" },
     { type="COMPLETE", title="Assessing the Threat", questId=246, coords={ x=30.88, y=83.2 }, note="Kill 10 Redridge Mongrel and 6 Redridge Poacher which can be found to the south in Lakeridge Highway (30.88, 83.20) (41.98, 72.88)" },
-    { type="COMPLETE", title="Redridge Goulash", questId=92, itemId=1080, itemCount=5, coords={ x=59.1, y=77.17 }, note="Kill Dire Condor and get 5 pieces of Tough Condor Meat<br/><b>Tip: also kill Black Dragon Whelp in the area for easy XP (59.10, 77.17)" },
+    { type="COMPLETE", title="Redridge Goulash", questId=92, coords={ x=59.1, y=77.17 }, note="Kill Dire Condor and get 5 pieces of Tough Condor Meat<br/><b>Tip: also kill Black Dragon Whelp in the area for easy XP (59.10, 77.17)" },
     { type="COMPLETE", title="Underbelly Scales", questId=122, coords={ x=33.37, y=67.13 }, note="Kill Black Dragon Whelp and collect 6 Underbelly Whelp Scale in Lakeridge Highway (33.37, 67.13)" },
     { type="TRAVEL", coords={ x=30.74, y=60.15 }, note="Travel to Lakeshire (30.74, 60.15)" },
     { type="TURNIN", title="Assessing the Threat", questId=246, coords={ x=30.74, y=60.15 }, npc = { name="Deputy Feldon" }, note="Deputy Feldon in Lakeshire (30.74, 60.15)" },

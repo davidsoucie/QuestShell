@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Azshara_46_46.lua
--- Converted from TourGuide format on 2025-08-16 19:50:39
+-- Converted from TourGuide format on 2025-08-16 22:16:23
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

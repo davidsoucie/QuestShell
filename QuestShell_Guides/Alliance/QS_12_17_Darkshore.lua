@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Darkshore_12_17.lua
--- Converted from TourGuide format on 2025-08-16 19:50:30
+-- Converted from TourGuide format on 2025-08-16 22:16:13
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}

@@ -1,6 +1,6 @@
 -- =========================
 -- QS_Dustwallow_Marsh_38_39.lua
--- Converted from TourGuide format on 2025-08-16 19:50:37
+-- Converted from TourGuide format on 2025-08-16 22:16:21
 -- =========================
 
 QuestShellGuides = QuestShellGuides or {}
@@ -38,7 +38,7 @@ QuestShellGuides["QS_Dustwallow_Marsh_38_39"] = {
     { type="TRAVEL", coords={ x=67.9, y=47.95 }, note="Travel to Foothold Citadel (67.90, 47.95)" },
     { type="TURNIN", title="They Call Him Smiling Jim", questId=1282, coords={ x=68.23, y=48.62 }, npc = { name="Captain Garran Vimes" }, note="Captain Garran Vimes in Foothold Citadel (68.23, 48.62)" },
     { type="NOTE", note="Soothing Spices", coords={ x=66.4, y=51.4 } },
-    { type="COMPLETE", title="Mudrock Soup and Bugs", questId=1204, itemId=5883, itemCount=4, coords={ x=64.71, y=41.39 }, note="Kill Mudrock Tortoise or Mudrock Spikeshell and collect 8 Forked Mudrock Tongue in Theramore Isle. This quest have a low drop rate and the turtles are scarce try to get 4 Forked Mudrock Tongue and complete this later (64.71, 41.39) (64.71, 41.39) (64.25, 39.05) (63.00, 36.58) (61.72, 27.53) (61.73, 21.48)" },
+    { type="COMPLETE", title="Mudrock Soup and Bugs", questId=1204, coords={ x=64.71, y=41.39 }, note="Kill Mudrock Tortoise or Mudrock Spikeshell and collect 8 Forked Mudrock Tongue in Theramore Isle. This quest have a low drop rate and the turtles are scarce try to get 4 Forked Mudrock Tongue and complete this later (64.71, 41.39) (64.71, 41.39) (64.25, 39.05) (63.00, 36.58) (61.72, 27.53) (61.73, 21.48)" },
     { type="TRAVEL", coords={ x=55.43, y=26.27 }, note="Travel to Swamplight Manor (55.43, 26.27)" },
     { type="ACCEPT", title="Soothing Spices", questId=1218, coords={ x=55.43, y=26.27 }, npc = { name="Jarl" }, note="\"Swamp Eye\" Jarl in Swamplight Manor (55.43, 26.27)" },
     { type="TURNIN", title="Soothing Spices", questId=1218, coords={ x=55.43, y=26.27 }, npc = { name="Jarl" }, note="\"Swamp Eye\" Jarl in Swamplight Manor (55.43, 26.27)" },
