@@ -6,7 +6,21 @@
 
 QuestShell = QuestShell or {}
 -- default guide on startup
-if QuestShell.debug == nil then QuestShell.debug = true end
+if QuestShell and type(QuestShell.debug) == "nil" then QuestShell.debug = false end
+
+local function QS_IsDebug()
+    -- primary
+    if QuestShell and type(QuestShell.debug) ~= "nil" then return QuestShell.debug end
+    -- legacy fallback
+    if type(QuestShell_Debug) ~= "nil" then return QuestShell_Debug end
+    return false
+end
+
+function QS_D(m)
+    if QS_IsDebug() and DEFAULT_CHAT_FRAME then
+        DEFAULT_CHAT_FRAME:AddMessage("|cff33ff99[QuestShell:DBG]|r "..tostring(m))
+    end
+end
 
 function QS_Print(m) if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[QuestShell]|r "..tostring(m)) end end
 function QS_Warn(m)  if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffff8800[QuestShell]|r "..tostring(m)) end end

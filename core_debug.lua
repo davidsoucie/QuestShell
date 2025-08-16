@@ -3,7 +3,7 @@
 -- Lightweight debug logger + wrappers + event probe (Vanilla/Turtle safe)
 -- =========================
 QuestShell = QuestShell or {}
-if QuestShell.debug == nil then QuestShell.debug = true end
+if QuestShell.debug == nil then QuestShell.debug = false end
 
 local function _chat(msg)
     if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffcc66ff[QuestShell:DBG]|r "..tostring(msg)) end
