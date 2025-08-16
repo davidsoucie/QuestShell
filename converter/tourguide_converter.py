@@ -1,825 +1,639 @@
 #!/usr/bin/env python3
 """
-TourGuide to QuestShell Converter (with conflict summary)
-------------------------------------------------------------------
-- Preserves order of grouped L-lines (inserted at group position)
-- K -> COMPLETE with kill objective
-- L-lines are always loot-first (even if note says "Kill ...")
-- Per-objective notes for grouped L objectives
-- Better "Use ..." parsing
-- NPC extraction: uppercase initial, extra patterns ("find <Name> in", "<Name>, ...")
-- Accept w/ item: don't require NPC
-- Title backfill from ACCEPT, TURNIN, COMPLETE
-- Title cleanup (strip (Part N), |TAG|...|)
-- Bring N Item parsing; Kill-until-find parsing
-- Kill objectives never keep itemId
-- Skip [[ and ]] lines even with trailing comments
-- README includes detailed issues; writes *_issues.json
-- Writes *_mappings.json (questId->title, itemId->name)
-- Logs duplicate item IDs with different names and writes *_conflicts.json
-- Class restriction is emitted UPPERCASE (e.g., DRUID, WARRIOR)
-- Race restriction is emitted UPPERCASE (e.g., NIGHT ELF, TAUREN/ORC)
+TourGuide -> QuestShell converter (fixed)
+- Parses current/next/faction from TourGuide:RegisterGuide("Zone (x-y)", "Next (y-z)", "Alliance", function()
+- Emits flat steps (no chapters)
+- Prefers quest titles from quests.lua / quests_db.json when questId is present
+- Supports pfDB["quests"]["<locale>"][id] = { ["T"] = "Title", ... } and simple formats
+- Merges consecutive COMPLETE steps for same quest (e.g., 3521.1 + 3521.2)
+- Strips stray TG tokens like |REACH| from notes
+- Keys and filenames are QS_-prefixed:
+    input:  01_12_Teldrassil.lua
+    output: QS_01_12_Teldrassil.lua and QS_01_12_Teldrassil_README.md
+    nextKey also becomes QS_<...>
 """
 
-import re, os, sys, json
-from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass, field
-from datetime import datetime
+import os, re, json
+from dataclasses import dataclass
+from typing import Optional, Dict, Any, List, Iterable
 
-@dataclass
-class ConversionIssue:
-    line_number: int
-    issue_type: str
-    description: str
-    original_line: str
-    severity: str = "medium"
+Coord = Dict[str, Any]
+NPC = Dict[str, str]
 
-@dataclass
-class QuestStep:
-    step_type: str
-    title: str
-    quest_id: Optional[int] = None
-    coords: Optional[Dict[str, Any]] = None
-    npc: Optional[Dict[str, str]] = None
-    note: str = ""
-    objectives: List[Dict[str, Any]] = field(default_factory=list)
-    class_restriction: Optional[str] = None
-    race_restriction: Optional[str] = None
-    destination: Optional[str] = None
-    optional: bool = False
-    prerequisite: Optional[int] = None
-    as_you_go: bool = False
-    item_id: Optional[int] = None
-    item_name: Optional[str] = None
-    line_num: int = 0
+# -------------------- Regexes --------------------
+COORD_RE = re.compile(r'\(([0-9]+(?:\.[0-9]+)?),\s*([0-9]+(?:\.[0-9]+)?)\)')
+QID_RE   = re.compile(r'\|QID\|(\d+)(?:\.\d+)?\|', re.I)
+NOTE_RE  = re.compile(r'\|N\|((?:[^|]|\|(?![A-Za-z0-9]+\|))+)\|', re.I)
+USE_RE   = re.compile(r'\|U\|(\d+)\|', re.I)
+CLASS_RE = re.compile(r'\|C\|([A-Za-z,]+)\|', re.I)
+RACE_RE  = re.compile(r'\|R\|([A-Za-z,]+)\|', re.I)
+LOOT_RE  = re.compile(r'\|L\|(\d+)\s+(\d+)\|', re.I)
 
-class TourGuideConverter:
-    def __init__(self):
-        self.issues: List[ConversionIssue] = []
-        self.stats = {'total_lines':0,'converted_steps':0,'skipped_lines':0,'issues_found':0}
-        self.found_item_ids:set[int]=set()
-        self.found_quest_ids:set[int]=set()
-        self.found_npcs:set[str]=set()
-        self.found_zones:set[str]=set()
-        # Mappings
-        self.quest_id_to_title: Dict[int,str] = {}
-        self.item_id_to_name: Dict[int,str] = {}
-        # Name history & conflict events
-        self._item_id_names: Dict[int, List[str]] = {}
-        self.item_conflicts: List[Dict[str, Any]] = []
+REGISTER_RE = re.compile(
+    r'TourGuide:RegisterGuide\(\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*function',
+    re.IGNORECASE,
+)
 
-    # ---------- helpers ----------
-    def log_issue(self, ln, t, d, orig, sev="medium"):
-        self.issues.append(ConversionIssue(ln,t,d,orig,sev)); self.stats['issues_found']+=1
+# quests.lua patterns (simple/legacy)
+QL_SIMPLE_DQ = re.compile(r'\[\s*(\d+)\s*\]\s*=\s*"([^"]+)"')
+QL_SIMPLE_SQ = re.compile(r"\[\s*(\d+)\s*\]\s*=\s*'([^']+)'")
+QL_NAME_DQ   = re.compile(r'\[\s*"?(\d+)"?\s*\]\s*=\s*\{[^}]*?\bname\s*=\s*"([^"]+)"', re.S)
+QL_NAME_SQ   = re.compile(r"\[\s*\"?(\d+)\"?\s*\]\s*=\s*\{[^}]*?\bname\s*=\s*'([^']+)'", re.S)
+# pfDB-style entry: [916] = { ["T"] = "Title", ... } (supports single/double quotes and string keys)
+PFDB_ENTRY = re.compile(r'\[\s*"?(\d+)"?\s*\]\s*=\s*\{(.*?)\}', re.S)
+PFDB_T_DQ  = re.compile(r'\[\s*"(?:T)"\s*\]\s*=\s*"((?:[^"\\]|\\.)*)"')
+PFDB_T_SQ  = re.compile(r"\[\s*'(?:T)'\s*\]\s*=\s*'((?:[^'\\]|\\.)*)'")
 
-    def clean_title(self, t:str)->str:
-        if not t: return ''
-        t = re.sub(r'\s*\(Part\s+\d+\)', '', t, flags=re.I)
-        t = re.sub(r'\|[A-Z]+?\|.*?\|', '', t)  # strip accidental |TAG|...|
-        return t.strip()
-
-    def normalize_common_typos(self, s:str)->str:
-        if not s: return s
-        for pat,rep in [
-            (r'\bSpee+ak\b','Speak'),
-            (r'\bSpeaaak\b','Speak'),
-            (r'\bect\b','etc'),
-            (r'\bteh\b','the'),
-        ]:
-            s = re.sub(pat,rep,s,flags=re.I)
-        return s
-
-    def _sanitize_item_label(self, label:str)->str:
-        if not label: return label
-        # strip trailing helper words like 'found' / 'dropped' and anything after
-        label = re.sub(r'\b(found|dropped)\b.*$', '', label, flags=re.I).strip()
-        label = re.sub(r'\s+', ' ', label).strip(' ,.;:')
-        return label
-
-    def _choose_item_label(self, header_name:str, collect_label:Optional[str])->str:
-        """Prefer a clean 'collect' label unless it looks generic; else use header."""
-        h = (header_name or '').strip()
-        c = self._sanitize_item_label(collect_label) if collect_label else None
-        if not c:
-            return h
-        generic = {'fang', 'fangs', 'feather', 'feathers', 'silk', 'spider silk', 'book', 'ore', 'moss', 'seed', 'sprout', 'jewel', 'rod', 'item'}
-        if c.lower() in generic:
-            return h or c
-        # If collect label is one token but header has multiple capitalized tokens, prefer header
-        if len(c.split()) == 1 and len(h.split()) >= 2:
-            return h
-        return c
-
-    def _norm_for_compare(self, name:str)->str:
-        s = name.lower().strip()
-        s = re.sub(r"[^\w\s']", " ", s)
-        s = re.sub(r"\b(the|a|an)\b", " ", s)
-        s = re.sub(r"\s+", " ", s).strip()
-        if s.endswith('s') and not s.endswith('ss'):
-            s = s[:-1]
-        return s
-
-    def _is_generic_label(self, name:str)->bool:
-        if not name: return True
-        generic = {'fang','feather','silk','book','ore','moss','seed','sprout','jewel','rod','item','feathers','fangs'}
-        s = self._norm_for_compare(name)
-        return s in generic or (len(s.split()) == 1 and s in generic)
-
-    def _add_conflict_event(self, kind:str, item_id:int, kept:str, new:str, ln:int, orig:str, ctx:str):
-        self.item_conflicts.append({
-            "type": kind,
-            "itemId": item_id,
-            "kept_name": kept,
-            "new_name": new,
-            "line_number": ln,
-            "context": ctx,
-            "snippet": orig.strip()
-        })
-
-    def _record_item_mapping(self, item_id:int, name:str, ln:int, original_line:str, context:str):
-        """
-        Canonicalize item_id -> name, prefer specific over generic, and log conflicts.
-        """
-        name_clean = self._sanitize_item_label(name)
-        current = self.item_id_to_name.get(item_id)
-
-        # track history
-        self._item_id_names.setdefault(item_id, [])
-        if name_clean not in self._item_id_names[item_id]:
-            self._item_id_names[item_id].append(name_clean)
-
-        if current is None:
-            self.item_id_to_name[item_id] = name_clean
-            return
-
-        if self._norm_for_compare(current) == self._norm_for_compare(name_clean):
-            # same after normalization; no issue
-            return
-
-        curr_generic = self._is_generic_label(current)
-        new_generic  = self._is_generic_label(name_clean)
-
-        if curr_generic and not new_generic:
-            # Replace generic with specific
-            self.item_id_to_name[item_id] = name_clean
-            self.log_issue(ln,"ITEM_ID_GENERIC_REPLACED",
-                           f"Replaced generic '{current}' with specific '{name_clean}' for itemId {item_id} ({context})",
-                           original_line,"low")
-            self._add_conflict_event("ITEM_ID_GENERIC_REPLACED", item_id, name_clean, current, ln, original_line, context)
-            return
-
-        if not curr_generic and new_generic:
-            # Keep specific, ignore generic
-            self.log_issue(ln,"ITEM_ID_GENERIC_IGNORED",
-                           f"Ignored generic '{name_clean}' for itemId {item_id}; keeping '{current}' ({context})",
-                           original_line,"low")
-            self._add_conflict_event("ITEM_ID_GENERIC_IGNORED", item_id, current, name_clean, ln, original_line, context)
-            return
-
-        # Both non-generic and different: conflict
-        self.log_issue(ln,"ITEM_ID_NAME_CONFLICT",
-                       f"ItemId {item_id} seen as '{current}' and '{name_clean}' ({context})",
-                       original_line,"high")
-        self._add_conflict_event("ITEM_ID_NAME_CONFLICT", item_id, current, name_clean, ln, original_line, context)
-        # Keep the first-seen (do not overwrite)
-
-    def extract_all_coords(self, text:str)->List[Tuple[float,float]]:
-        return [(float(a),float(b)) for a,b in re.findall(r'\(([0-9]+(?:\.[0-9]+)?),\s*([0-9]+(?:\.[0-9]+)?)\)', text or '')]
-
-    def coords_obj(self, pairs, map_name):
-        if not pairs: return None
-        d={'x':pairs[0][0],'y':pairs[0][1]}
-        if map_name: d['map']=map_name
-        return d
-
-    def extract_map_from_text(self, text:str)->Optional[str]:
-        if not text: return None
-        for p in [r'\bin\s+([A-Za-z][A-Za-z\s\'-]+?)\s*\(',
-                  r'\bin\s+([A-Za-z][A-Za-z\s\'-]+?)\s*(?:\||$)',
-                  r'\bat\s+([A-Za-z][A-Za-z\s\'-]+?)\s*\(']:
-            m=re.search(p,text)
-            if m:
-                s=m.group(1).strip()
-                s=re.split(r'\s+(?:and|then|to)\s+', s)[0]
-                if len(s)>2 and not re.match(r'^(the|a|an)\s',s,flags=re.I): return s
+# -------------------- Helpers --------------------
+def first_coords(text: str) -> Optional[Coord]:
+    m = COORD_RE.search(text or '')
+    if not m:
+        return None
+    try:
+        x = float(m.group(1)); y = float(m.group(2))
+        return {"x": x, "y": y}
+    except Exception:
         return None
 
-    def extract_npc(self, text:str)->Optional[str]:
-        if not text: return None
-        text=self.normalize_common_typos(text)
-        patterns=[
-            r'\bSpeak to Innkeeper\s+([A-Za-z][A-Za-z\s\'\.-]+?)(?=\s+(?:in|at|and|for|to|with)\b|\s*[,(\.]|$)',
-            r'\bInnkeeper\s+([A-Za-z][A-Za-z\s\'\.-]+?)(?=\s+(?:in|at|and|for|to|with)\b|\s*[,(\.]|$)',
-            r'\bfind\s+([A-Z][A-Za-z\'\.-]+(?:\s+[A-Z][A-Za-z\'\.-]+)*)\s+in\b',
-            r'^([A-Z][A-Za-z\'\.-]+(?:\s+[A-Z][A-Za-z\'\.-]+)*),',
-            r'\bSpeak to\s+([A-Za-z][A-Za-z\s\'\.-]+?)\s+in\b',
-            r'\bTalk to\s+([A-Za-z][A-Za-z\s\'\.-]+?)\s+in\b',
-            r'^([A-Za-z][A-Za-z\s\'\.-]+?)\s+(?:in|at)\s+[A-Za-z]',
-            r'^([A-Za-z][A-Za-z\s\'\.-]+?)\s+\(',
-            r'\bSpeak to\s+([A-Za-z][A-Za-z\s\'\.-]+?)(?=\s+(?:and|for|to|with)\b|\s*[,(\.]|$)',
-            r'\bTalk to\s+([A-Za-z][A-Za-z\s\'\.-]+?)(?=\s+(?:and|for|to|with)\b|\s*[,(\.]|$)',
-            r'\bto\s+([A-Za-z][A-Za-z\s\'\.-]+)\s+and\b',
-        ]
-        for p in patterns:
-            m=re.search(p,text,flags=re.I)
-            if m:
-                npc=m.group(1).strip().rstrip('.')
-                if re.search(r'Innkeeper', p, re.I) and not npc.lower().startswith('innkeeper'):
-                    npc='Innkeeper '+npc
-                npc=re.sub(r'\s+(?:in|at|and|then|for|to|with|down|up|north|south|east|west)\b.*$', '', npc)
-                if not re.match(r'^[A-Z]', npc):
-                    continue
-                if not re.match(r'^(Travel|Go|Use|Kill|Collect|Find|Enter|Exit|Head|Run|Follow|Click|Take|Escort|Reach|Bring|Turn|Hand|Deliver)\b', npc, re.I):
-                    return npc
-        return None
+def extract_qid(text: str) -> Optional[int]:
+    m = QID_RE.search(text or '')
+    return int(m.group(1)) if m else None
 
-    def extract_special_codes(self, line:str)->Dict[str,Any]:
-        c={}
-        m=re.search(r'\|C\|([A-Z][A-Za-z]+)\|',line);   c['class']=m.group(1).upper() if m else None  # UPPERCASE class
-        m=re.search(r'\|R\|([A-Za-z\s/]+)\|',line);     c['race']=m.group(1).strip().upper() if m else None  # UPPERCASE race
-        m=re.search(r'\|Z\|([A-Za-z\s\'-]+)\|',line);   c['zone']=m.group(1).strip() if m else None
-        c['optional']='|O|' in line
-        m=re.search(r'\|PRE\|(\d+)\|',line);            c['prerequisite']=int(m.group(1)) if m else None
-        c['as_you_go']='|AYG|' in line
-        m=re.search(r'\|U\|(\d+)\|',line);              c['use_item']=int(m.group(1)) if m else None
-        m=re.search(r'\|L\|(\d+)\s+(\d+)\|',line);      
-        if m: c['loot_item_id'],c['loot_amount']=int(m.group(1)),int(m.group(2))
-        m=re.search(r'\|TID\|(\d+)\|',line);            c['tid']=int(m.group(1)) if m else None
-        m=re.search(r'\|OID\|(\d+)\|',line);            c['oid']=int(m.group(1)) if m else None
-        return {k:v for k,v in c.items() if v is not None}
+def clean_note_text(note: str) -> str:
+    if not note:
+        return ""
+    note = re.sub(r'\s*\|[A-Za-z][A-Za-z0-9]*\|\s*', ' ', note)  # drop |REACH|, |NC|, etc.
+    note = note.replace('|', ' ')
+    note = re.sub(r'\s+', ' ', note).strip()
+    return note
 
-    def extract_objectives_from_note(self, note:str, codes:Dict[str,Any])->List[Dict[str,Any]]:
-        if not note: return []
-        note=self.normalize_common_typos(note)
-        objs=[]
+def extract_note(text: str) -> str:
+    m = NOTE_RE.search(text or '')
+    if not m:
+        return ""
+    return clean_note_text(m.group(1))
 
-        # Escort
-        esc = re.search(r'\b[Ee]scort\s+([A-Z][A-Za-z\'\-]+(?:\s+[A-Z][A-Za-z\'\-]+)*)\s+(?:to|back to|into|through|down|up|across)\b', note)
-        if not esc:
-            esc = re.search(r'\b[Ee]scort\s+([A-Z][A-Za-z\'\-]+)', note)
-        if esc:
-            name = esc.group(1).strip()
-            objs.append({"kind":"escort","label":f"{name} escorted","target":1})
-            return objs
+def extract_item_use(text: str) -> Optional[int]:
+    m = USE_RE.search(text or '')
+    return int(m.group(1)) if m else None
 
-        # Bring N Item (treat as loot objective)
-        m=re.search(r'\b[Bb]ring\s+(\d+)\s+([A-Za-z][A-Za-z\s\'-]+?)(?:\s+(?:and|to)\b|\s*$)', note)
-        if m:
-            num,item=m.groups()
-            item_clean = self._sanitize_item_label(item.strip())
-            o={"kind":"loot","label":item_clean,"target":int(num)}
-            objs.append(o)
-            m2=re.search(r"\band\s+the\s+([A-Za-z][A-Za-z\s\'-]+)", note)
-            if m2:
-                objs.append({"kind":"loot","label":self._sanitize_item_label(m2.group(1).strip()),"target":1})
-            return objs
+def extract_loot(text: str):
+    m = LOOT_RE.search(text or '')
+    if not m:
+        return None, None
+    return int(m.group(1)), int(m.group(2))
 
-        # Collect N Item
-        m=re.search(r'\b[Cc]ollect\s+(\d+)\s+([A-Za-z][A-Za-z\s\'-]+?)(?:\s+(?:from|in|around|at|near)\b|\s*$)', note)
-        if m:
-            num,item=m.groups()
-            item_clean = self._sanitize_item_label(item.strip())
-            o={"kind":"loot","label":item_clean,"target":int(num)}
-            if 'loot_item_id' in codes:
-                o['itemId']=codes['loot_item_id']; self.found_item_ids.add(codes['loot_item_id'])
-                self._record_item_mapping(codes['loot_item_id'], item_clean, 0, note, "collect")
-            objs.append(o); return objs
+def extract_class(text: str) -> Optional[str]:
+    m = CLASS_RE.search(text or '')
+    return m.group(1).strip() if m else None
 
-        # Kill A and B
-        m=re.search(r'\b[Kk]ill\s+(\d+)\s+([A-Za-z][A-Za-z\s\'-]+?)\s+and\s+(\d+)\s+([A-Za-z][A-Za-z\s\'-]+?)(?:\s+(?:in|and|around|at|near)\b|\s*$)', note)
-        if m:
-            n1,m1,n2,m2=m.groups()
-            objs.append({"kind":"kill","label":m1.strip(),"target":int(n1)})
-            objs.append({"kind":"kill","label":m2.strip(),"target":int(n2)})
-            return objs
+def extract_race(text: str) -> Optional[str]:
+    m = RACE_RE.search(text or '')
+    return m.group(1).strip() if m else None
 
-        # Kill N Mob
-        m=re.search(r'\b[Kk]ill\s+(\d+)\s+([A-Za-z][A-Za-z\s\'-]+?)(?:\s+(?:in|and|around|at|near)\b|\s*$)', note)
-        if m:
-            num,mob=m.groups(); objs.append({"kind":"kill","label":mob.strip(),"target":int(num)})
+def clean_title(raw: str) -> str:
+    title = (raw or '').strip()
+    title = re.sub(r'\s*\(Part\s*\d+\)\s*', '', title, flags=re.I)
+    return title.strip()
 
-        # Kill X until you find Y
-        m=re.search(r'\b[Kk]ill\s+([A-Za-z][A-Za-z\s\'-]+?)\s+until you (?:find|get)\s+([A-Za-z][A-Za-z\s\'-]+)', note)
-        if m:
-            mob,item=m.groups()
-            objs.append({"kind":"kill","label":mob.strip(),"target":1})
-            item_clean = self._sanitize_item_label(item.strip())
-            o={"kind":"loot","label":item_clean,"target":codes.get('loot_amount',1)}
-            if 'loot_item_id' in codes:
-                o['itemId']=codes['loot_item_id']; self.found_item_ids.add(codes['loot_item_id'])
-                self._record_item_mapping(codes['loot_item_id'], item_clean, 0, note, "kill-until-find")
-            objs.append(o)
+def parse_register_header(src: str):
+    m = REGISTER_RE.search(src or "")
+    if not m:
+        return None, None, None
+    return m.group(1).strip(), m.group(2).strip(), m.group(3).strip()
 
-        # Use item
-        use_pat = r'\bUse\s+(?:the\s+)?([A-Za-z][A-Za-z\s\'-]+?)(?=\s+(?:at|on|to|in|near|with)\b|\s*\(|\s*$)'
-        if 'use_item' in codes:
-            self.found_item_ids.add(codes['use_item'])
-            m=re.search(use_pat, note)
-            label=m.group(1).strip() if m else f"Item {codes['use_item']}"
-            label_clean = self._sanitize_item_label(label)
-            objs.append({"kind":"use_item","label":label_clean,"target":1,"itemId":codes['use_item']})
-            if not label.startswith('Item '):
-                self._record_item_mapping(codes['use_item'], label_clean, 0, note, "use-item")
-        else:
-            m=re.search(use_pat, note)
-            if m: objs.append({"kind":"use_item","label":self._sanitize_item_label(m.group(1).strip()),"target":1})
-
-        return objs
-
-    def parse_quest_id(self, s:str)->Optional[int]:
-        if not s: return None
-        try: return int(s.split('.')[0])
-        except: return None
-
-    # ---------- converters ----------
-    def convert_accept_step(self, line, ln):
-        m=re.match(r'^A\s+(.+?)\s+\|QID\|([\d\.]+)\|\s*\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse ACCEPT",line,"high"); return None
-        title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s); codes=self.extract_special_codes(line)
-        if qid: self.found_quest_ids.add(qid)
-        note=self.normalize_common_typos(note)
-        map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
-        coords=self.coords_obj(self.extract_all_coords(note), map_name)
-        npc=self.extract_npc(note)
-        if map_name: self.found_zones.add(map_name)
-        if npc: self.found_npcs.add(npc)
-        if not npc and not codes.get('use_item') and not re.search(r'\bUse\b.*\bto accept\b', note, flags=re.I):
-            self.log_issue(ln,"MISSING_NPC","No NPC for ACCEPT",line,"medium")
-        return QuestStep("ACCEPT", self.clean_title(title), qid, coords, {"name":npc} if npc else None, note,
-                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
-                         optional=codes.get('optional',False), prerequisite=codes.get('prerequisite'), line_num=ln)
-
-    def convert_complete_step(self, line, ln):
-        m=re.match(r'^C\s+(.+?)\s+\|QID\|([\d\.]+)\|\s*\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse COMPLETE",line,"high"); return None
-        title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s); codes=self.extract_special_codes(line)
-        if qid: self.found_quest_ids.add(qid)
-        note=self.normalize_common_typos(note)
-        map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
-        coords=self.coords_obj(self.extract_all_coords(note), map_name)
-        if map_name: self.found_zones.add(map_name)
-        objectives=self.extract_objectives_from_note(note,codes)
-        if not objectives: self.log_issue(ln,"MISSING_OBJECTIVES","No objectives parsed",line,"medium")
-        return QuestStep("COMPLETE", self.clean_title(title), qid, coords, None, note, objectives,
-                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
-                         optional=codes.get('optional',False), as_you_go=codes.get('as_you_go',False), line_num=ln)
-
-    def convert_turnin_step(self, line, ln):
-        m=re.match(r'^T\s+(.+?)\s+\|QID\|([\d\.]+)\|\s*\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse TURNIN",line,"high"); return None
-        title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s); codes=self.extract_special_codes(line)
-        if qid: self.found_quest_ids.add(qid)
-        note=self.normalize_common_typos(note)
-        map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
-        coords=self.coords_obj(self.extract_all_coords(note), map_name)
-        npc=self.extract_npc(note)
-        if map_name: self.found_zones.add(map_name)
-        if npc: self.found_npcs.add(npc)
-        if not npc: self.log_issue(ln,"MISSING_NPC","No NPC for TURNIN",line,"medium")
-        return QuestStep("TURNIN", self.clean_title(title), qid, coords, {"name":npc} if npc else None, note,
-                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
-                         optional=codes.get('optional',False), line_num=ln)
-
-    def convert_travel_step(self, line, ln):
-        m=re.match(r'^R\s+(.+?)\s+(?:\|QID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse TRAVEL",line,"medium"); return None
-        title,qid_s,note=m.groups()
-        qid=self.parse_quest_id(qid_s) if qid_s else None
-        codes=self.extract_special_codes(line)
-        if qid: self.found_quest_ids.add(qid)
-        note=self.normalize_common_typos(note)
-        map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
-        coords=self.coords_obj(self.extract_all_coords(note), map_name)
-        if map_name: self.found_zones.add(map_name)
-        return QuestStep("TRAVEL", self.clean_title(title), qid, coords, None, note,
-                         optional=codes.get('optional',False), prerequisite=codes.get('prerequisite'),
-                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
-                         line_num=ln)
-
-    def convert_fly_step(self, line, ln):
-        m=re.match(r'^F\s+(.+?)\s+\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse FLY",line,"medium"); return None
-        title,note=m.groups(); codes=self.extract_special_codes(line)
-        note=self.normalize_common_typos(note)
-        coords=self.coords_obj(self.extract_all_coords(note), codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note))
-        npc=self.extract_npc(note)
-        if npc: self.found_npcs.add(npc)
-        destination=title.strip()
-        m2=re.search(r'\bfly to\s+([A-Za-z][A-Za-z\s\'-]+)', note, flags=re.I)
-        if m2: destination=m2.group(1).strip()
-        return QuestStep("FLY", self.clean_title(title), None, coords, {"name":npc} if npc else None, note,
-                         class_restriction=codes.get('class'), race_restriction=codes.get('race'), destination=destination, line_num=ln)
-
-    def convert_flightpath_step(self, line, ln):
-        m=re.match(r'^f\s+(.+?)\s+(?:\|TID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse FLIGHTPATH",line,"medium"); return None
-        title,tid,note=m.groups(); codes=self.extract_special_codes(line)
-        note=self.normalize_common_typos(note)
-        coords=self.coords_obj(self.extract_all_coords(note), codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note))
-        npc=self.extract_npc(note)
-        st=QuestStep("FLIGHTPATH", self.clean_title(title), None, coords, {"name":npc} if npc else None, note,
-                     class_restriction=codes.get('class'), race_restriction=codes.get('race'),
-                     line_num=ln)
-        if tid and tid.strip().isdigit(): st.item_id=int(tid)
-        return st
-
-    def convert_hearth_step(self, line, ln):
-        m=re.match(r'^h\s+(.+?)\s+(?:\|QID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse HEARTH",line,"medium"); return None
-        title,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s) if qid_s else None
-        codes=self.extract_special_codes(line)
-        note=self.normalize_common_typos(note)
-        coords=self.coords_obj(self.extract_all_coords(note), self.extract_map_from_text(line) or self.extract_map_from_text(note))
-        npc=self.extract_npc(note)
-        return QuestStep("SET_HEARTH", self.clean_title(title), qid, coords, {"name":npc} if npc else None, note,
-                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
-                         line_num=ln)
-
-    def convert_note_step(self, line, ln):
-        m=re.match(r'^N\s+(.+?)\s+\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse NOTE",line,"low"); return None
-        title,note=m.groups(); codes=self.extract_special_codes(line)
-        note=self.normalize_common_typos(note)
-        return QuestStep("NOTE", self.clean_title(title), None, None, None, note,
-                         class_restriction=codes.get('class'), as_you_go=codes.get('as_you_go',False), optional=codes.get('optional',False), line_num=ln)
-
-    def convert_buy_step(self, line, ln):
-        m=re.match(r'^B\s+(.+?)\s+(?:\|QID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse BUY",line,"low"); return None
-        item_name,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s) if qid_s else None; codes=self.extract_special_codes(line)
-        note=self.normalize_common_typos(note)
-        coords=self.coords_obj(self.extract_all_coords(note), codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note))
-        npc=self.extract_npc(note);  item_id=codes.get('loot_item_id')
-        if npc: self.found_npcs.add(npc)
-        if item_id:
-            self.found_item_ids.add(item_id)
-            self._record_item_mapping(item_id, item_name.strip(), ln, line, "buy")
-        return QuestStep("BUY", f"Buy {item_name.strip()}", qid, coords, {"name":npc} if npc else None, note,
-                         item_id=item_id, item_name=item_name.strip(),
-                         class_restriction=codes.get('class'), race_restriction=codes.get('race'),
-                         line_num=ln)
-
-    def convert_kill_step(self, line, ln):
-        m=re.match(r'^K\s+(.+?)\s+(?:\|QID\|([^|]*)\|)?\s*\|N\|(.+?)\|', line)
-        if not m: self.log_issue(ln,"PARSE_ERROR","Could not parse KILL",line,"low"); return None
-        label,qid_s,note=m.groups(); qid=self.parse_quest_id(qid_s) if qid_s else None; codes=self.extract_special_codes(line)
-        note=self.normalize_common_typos(note)
-        map_name=codes.get('zone') or self.extract_map_from_text(line) or self.extract_map_from_text(note)
-        coords=self.coords_obj(self.extract_all_coords(note), map_name)
-        amt=1; m2=re.search(r'\b[Kk]ill\s+(\d+)\s+', note);  amt=int(m2.group(1)) if m2 else 1
-        obj={"kind":"kill","label":label.strip(),"target":amt}
-        return QuestStep("COMPLETE", f"Kill {label.strip()}", qid, coords, None, note, [obj],
-                         class_restriction=codes.get('class'), race_restriction=codes.get('race'), line_num=ln)
-
-    def convert_loot_line(self, line, ln):
-        m=re.match(r'^L\s+(\d+)\s+(.+?)\s*\|QID\|([^|]+)\|\s*\|N\|(.+?)\|', line)
-        if not m:
-            self.log_issue(ln,"PARSE_ERROR","Could not parse LOOT line",line,"medium")
-            return None
-        amount,item_name,qid_s,note=m.groups()
-        codes=self.extract_special_codes(line)
-        coords=self.coords_obj(self.extract_all_coords(note), self.extract_map_from_text(line) or self.extract_map_from_text(note))
-        # Prefer collected item in note; number is optional; stop at coords/punctuation/context words
-        collect_m = re.search(
-            r"(?:[Cc]ollect|[Oo]btain|[Ll]oot|[Rr]etrieve|[Gg]et|[Tt]ake)\s+(?:the\s+)?(?:\d+\s+)?([A-Za-z][A-Za-z\s\'-]*?[A-Za-z])(?=\s+(?:from|in|around|at|near|off|on|inside|under|by|within|and|with|to|for|of|dropped|found)\b|\s*\(|[.,;)]|$)",
-            note
-        )
-        collect_label = collect_m.group(1).strip() if collect_m else None
-        best_label = self._choose_item_label(item_name.strip(), collect_label)
-        if 'loot_item_id' in codes:
-            self.found_item_ids.add(codes['loot_item_id'])
-            self._record_item_mapping(codes['loot_item_id'], best_label, ln, line, "L-line")
-        return {
-            "item_name": item_name.strip(),
-            "amount": int(amount),
-            "quest_id_str": qid_s,
-            "base_quest_id": self.parse_quest_id(qid_s),
-            "note": self.normalize_common_typos(note),
-            "coords": coords,
-            "codes": codes,
-            "line_num": ln,
-            "collect_label": collect_label,
-            "best_label": best_label
-        }
-
-    def create_objective_from_loot_data(self, ld:Dict)->Optional[Dict[str,Any]]:
+def parse_minmax_from_title(title: Optional[str]):
+    if not title:
+        return 1, 60
+    m = re.search(r'\((\d+)\s*-\s*(\d+)\)', title or '')
+    if m:
         try:
-            # L-lines are always loot-first. "Kill ..." in note is context for getting the loot.
-            label = ld.get("best_label") or ld.get("collect_label") or ld["item_name"]
-            label = self._sanitize_item_label(label)
-            obj={"label":label,"target":ld["amount"],"kind":"loot","note":ld.get("note","")}
-            if ld.get("coords"):
-                obj["coords"]={"x":ld["coords"]["x"],"y":ld["coords"]["y"]}
-            if ld["codes"].get('loot_item_id'):
-                obj["itemId"]=ld["codes"]['loot_item_id']
-                self._record_item_mapping(ld['codes']['loot_item_id'], label, ld.get("line_num",0), ld.get("note",""), "L->objective")
-            else:
-                self.log_issue(ld.get("line_num",0),"MISSING_ITEM_ID",f"No item ID for loot objective: {label}", f"L line for {label}", "low")
-            return obj
-        except Exception as e:
-            self.log_issue(ld.get("line_num",0),"OBJECTIVE_ERROR",f"Error creating objective: {e}", f"L line for {ld.get('item_name','unknown')}", "medium")
-            return None
+            return int(m.group(1)), int(m.group(2))
+        except Exception:
+            pass
+    return 1, 60
 
-    def group_consecutive_loot_lines(self, loot_lines:List[Dict])->List[List[Dict]]:
-        if not loot_lines: return []
-        groups=[]; cur=[loot_lines[0]]; cur_q=loot_lines[0]["base_quest_id"]
-        for i in range(1,len(loot_lines)):
-            a=loot_lines[i-1]; b=loot_lines[i]
-            if b["base_quest_id"]==cur_q and b["line_num"]==a["line_num"]+1:
-                cur.append(b)
-            else:
-                groups.append(cur); cur=[b]; cur_q=b["base_quest_id"]
-        if cur: groups.append(cur)
-        return groups
+def sanitize_key(title: str) -> str:
+    if not title:
+        return "ConvertedGuide"
+    m = re.search(r'^(.*?)[\s_]*\((\d+)\s*-\s*(\d+)\)\s*$', title.strip())
+    if m:
+        zone = re.sub(r'\s+', '_', m.group(1).strip())
+        zone = re.sub(r'[^A-Za-z0-9_]', '', zone)
+        return f"{zone}_{m.group(2)}_{m.group(3)}"
+    key = re.sub(r'\s+', '_', title.strip())
+    key = re.sub(r'[^A-Za-z0-9_]', '', key)
+    return key
 
-    def _find_insert_index_by_line(self, steps:List["QuestStep"], line_num:int)->int:
-        idx = 0
-        for i, s in enumerate(steps):
-            if getattr(s, "line_num", 0) < line_num:
-                idx = i + 1
-            else:
-                break
-        return idx
+def qs_prefixed(key: str) -> str:
+    if not key:
+        return "QS_ConvertedGuide"
+    return key if key.startswith("QS_") else f"QS_{key}"
 
-    def process_loot_lines(self, loot_lines:List[Dict], quest_titles:Dict[int,str], steps:List[QuestStep]):
-        for group in self.group_consecutive_loot_lines(loot_lines):
-            if not group: continue
-            qid = group[0]["base_quest_id"]
-            qtitle = self.clean_title(quest_titles.get(qid, f"Quest {qid}"))
-            objectives=[]
-            for ld in group:
-                o=self.create_objective_from_loot_data(ld)
-                if o: objectives.append(o)
-            if not objectives: continue
-            coords = objectives[0].get("coords") if objectives[0].get("coords") else None
-            group_start = min(ld['line_num'] for ld in group)
-            step = QuestStep(
-                step_type="COMPLETE",
-                title=qtitle,
-                quest_id=qid,
-                coords=coords,
-                note=f"Complete objectives for {qtitle}",
-                objectives=objectives,
-                line_num=group_start
-            )
-            idx = self._find_insert_index_by_line(steps, group_start)
-            steps.insert(idx, step)
-            self.stats['converted_steps']+=1
+# -------------------- NPC inference --------------------
+NPC_PATTERNS = [
+    re.compile(r'(?:speak|talk)\s+(?:to\s+)?([A-Z][A-Za-z\'’`\-]+(?:\s+[A-Z][A-Za-z\'’`\-]+){0,4})', re.I),
+    re.compile(r'(Innkeeper\s+[A-Z][A-Za-z\'’`\-]+(?:\s+[A-Z][A-Za-z\'’`\-]+){0,3})', re.I),
+    re.compile(r'([A-Z][A-Za-z\'’`\-]+(?:\s+[A-Z][A-Za-z\'’`\-]+){0,4})\s*,?\s+(?:in|at)\s+', re.I),
+]
+STOPWORDS = set(['and','grab','get','buy','sell','train','then','for','the','a','an','flight','path','fp','fly','to','from'])
 
-    def convert_line(self, line:str, ln:int)->Optional[QuestStep]:
-        raw=line.strip()
-        if (not raw or raw.startswith('--') or raw.startswith('TourGuide') or raw.startswith('return')
-            or raw.startswith('[[') or raw.startswith(']]') or raw in ['[[',']]'] or raw=='end)'):
-            self.stats['skipped_lines']+=1; return None
-        t=raw[0]
-        try:
-            if t=='A': return self.convert_accept_step(raw,ln)
-            if t=='C': return self.convert_complete_step(raw,ln)
-            if t=='T': return self.convert_turnin_step(raw,ln)
-            if t=='R': return self.convert_travel_step(raw,ln)
-            if t=='F': return self.convert_fly_step(raw,ln)
-            if t=='f': return self.convert_flightpath_step(raw,ln)
-            if t=='h': return self.convert_hearth_step(raw,ln)
-            if t=='N': return self.convert_note_step(raw,ln)
-            if t=='B': return self.convert_buy_step(raw,ln)
-            if t=='K': return self.convert_kill_step(raw,ln)
-            if t=='L': return None
-            self.log_issue(ln,"UNKNOWN_STEP_TYPE",f"Unknown step type: {t}",raw,"low"); return None
-        except Exception as e:
-            self.log_issue(ln,"CONVERSION_ERROR",f"Error converting: {e}",raw,"high")
-            return None
-
-    # ---------- output ----------
-    def _lua_escape(self, s:str)->str:
-        if s is None: return ""
-        return s.replace('\\', '\\\\').replace('"','\\"').replace('\n','\\n')
-
-    def format_step_to_lua(self, step:QuestStep, is_last=False)->str:
-        indent="                "
-        out=f"{indent}{{\n"
-        out+=f'{indent}    type="{step.step_type}",\n'
-        out+=f'{indent}    title="{self._lua_escape(step.title)}",\n'
-        if step.quest_id is not None: out+=f'{indent}    questId={step.quest_id},\n'
-        if step.coords:
-            c=step.coords; cs=f"{{ x={c['x']}, y={c['y']}"
-            if 'map' in c: cs+=f', map="{self._lua_escape(c["map"])}"'
-            cs +=" }"
-            out+=f'{indent}    coords={cs},\n'
-        if step.npc: out+=f'{indent}    npc = {{ name="{self._lua_escape(step.npc["name"])}" }},\n'
-        if step.class_restriction: out+=f'{indent}    class="{self._lua_escape(step.class_restriction)}",\n'
-        if step.race_restriction: out+=f'{indent}    race="{self._lua_escape(step.race_restriction)}",\n'
-        if step.destination: out+=f'{indent}    destination = "{self._lua_escape(step.destination)}",\n'
-        if step.optional: out+=f'{indent}    optional = true,\n'
-        if step.prerequisite: out+=f'{indent}    prerequisite = {step.prerequisite},\n'
-        if step.as_you_go: out+=f'{indent}    asYouGo = true,\n'
-        if step.item_id: out+=f'{indent}    itemId={step.item_id},\n'
-        if step.item_name: out+=f'{indent}    itemName="{self._lua_escape(step.item_name)}",\n'
-        if step.objectives:
-            out+=f'{indent}    objectives = {{\n'
-            for i,obj in enumerate(step.objectives):
-                kind=obj.get("kind","unknown")
-                label=self._lua_escape(obj.get("label","Unknown"))
-                target=obj.get("target",1)
-                out+=f'{indent}        {{ kind="{kind}", label="{label}", target={target}'
-                if obj.get('itemId'): out+=f', itemId={obj["itemId"]}'
-                if obj.get('coords'): c2=obj['coords']; out+=f', coords={{ x={c2["x"]}, y={c2["y"]} }}'
-                if obj.get('note'): out+=f', note="{self._lua_escape(obj["note"])}"'
-                out+=' }'
-                if i < len(step.objectives)-1: out+=','
-                out+='\n'
-            out+=f'{indent}    }},\n'
-        if step.note:
-            out+=f'{indent}    note="{self._lua_escape(step.note)}"\n'
+def _refine_npc(raw: str) -> str:
+    if not raw: return ""
+    parts = raw.strip().split()
+    kept = []
+    for token in parts:
+        if token.lower() in STOPWORDS:
+            break
+        if token[:1].isupper():
+            kept.append(token)
         else:
-            if out.endswith(',\n'): out=out[:-2]+"\n"
-        out+=f"{indent}}}"
-        if not is_last: out+=','
-        out+="\n\n"
-        return out
+            break
+    return " ".join(kept).strip()
 
-    def format_output(self, steps:List[QuestStep], name:str)->str:
-        header=f"""-- =========================
--- {name}.lua
--- Converted from TourGuide format on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
--- =========================
+def infer_npc(note: str) -> Optional[str]:
+    text = note or ""
+    for pat in NPC_PATTERNS:
+        m = pat.search(text)
+        if m:
+            name = _refine_npc(m.group(1))
+            if name:
+                return name
+    return None
 
-QuestShellGuides = QuestShellGuides or {{}} 
+# -------------------- BUY/SELL as NOTE --------------------
+def is_buy_or_sell(line: str, title: str, note: str) -> bool:
+    hay = f"{title} {note}".lower()
+    if " sell " in f" {hay} " or hay.startswith("sell "):
+        return True
+    if " buy " in f" {hay} " or hay.startswith("buy "):
+        return True
+    if line[:1] in ("B", "b"):
+        return True
+    return False
 
-QuestShellGuides["{name}"] = {{
-    title    = "{name}",
-    minLevel = 1,
-    maxLevel = 20,
-
-    chapters = 
-    {{    
-        {{
-            id       = "{name}",
-            title    = "{name}",
-            zone     = "Unknown",
-            minLevel = 1,
-            maxLevel = 20,
-
-            steps = {{
-
-"""
-        body="".join(self.format_step_to_lua(s, i==len(steps)-1) for i,s in enumerate(steps))
-        footer="""            },
-        }
-    },
-}"""
-        return header+body+footer
-
-    def generate_readme(self, name:str, input_file:str, output_file:str)->str:
-        def fmt_issue(issue):
-            return (f"- **Line {issue.line_number}** — {issue.issue_type.replace('_',' ').title()}: {issue.description}\n"
-                    f"  ```\n  {issue.original_line.strip()}\n  ```\n")
-        sev_order = ['high','medium','low']
-        issues_by_sev = {s:[] for s in sev_order}
-        for it in self.issues:
-            issues_by_sev.get(it.severity, issues_by_sev['medium']).append(it)
-        parts=[
-            f"# {name} - Conversion Report\n\n",
-            f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}  \n",
-            f"**Source:** {input_file}  \n",
-            f"**Output:** {output_file}\n\n",
-            f"- Total Lines: {self.stats['total_lines']}\n",
-            f"- Steps Converted: {self.stats['converted_steps']}\n",
-            f"- Lines Skipped: {self.stats['skipped_lines']}\n",
-            f"- Issues Found: {self.stats['issues_found']}\n\n",
-        ]
-        if self.issues:
-            parts.append("## ⚠️ Issues Requiring Review\n\n")
-            for sev in sev_order:
-                iss = issues_by_sev[sev]
-                if not iss: continue
-                emoji = {'high':'🔴','medium':'🟡','low':'🟢'}[sev]
-                parts.append(f"### {emoji} {sev.upper()} Priority ({len(iss)})\n\n")
-                types = {}
-                for it in iss:
-                    types.setdefault(it.issue_type, []).append(it)
-                for tname, items in types.items():
-                    parts.append(f"#### {tname.replace('_',' ').title()} ({len(items)})\n\n")
-                    for it in items[:10]:
-                        parts.append(fmt_issue(it))
-                    if len(items) > 10:
-                        parts.append(f"… and {len(items)-10} more.\n\n")
-        else:
-            parts.append("## ✅ No issues found\n\n")
-        parts.append("## 🔍 Discovered Data\n\n")
-        parts.append(f"### Quest IDs Found ({len(self.found_quest_ids)})\n\n```\n")
-        parts.append(', '.join(map(str, sorted(self.found_quest_ids))) + "\n```\n\n")
-        parts.append(f"### Item IDs Found ({len(self.found_item_ids)})\n\n```\n")
-        parts.append(', '.join(map(str, sorted(self.found_item_ids))) + "\n```\n\n")
-        parts.append(f"### NPCs Found ({len(self.found_npcs)})\n\n```\n")
-        parts.append(', '.join(sorted(self.found_npcs)) + "\n```\n\n")
-        parts.append(f"### Zones/Maps Found ({len(self.found_zones)})\n\n```\n")
-        parts.append(', '.join(sorted(self.found_zones)) + "\n```\n\n")
-        return ''.join(parts)
-
-    # ---------- orchestration ----------
-    def convert_guide(self, input_file:str, output_file:str, guide_name:str=None):
-        if not guide_name: guide_name=os.path.splitext(os.path.basename(input_file))[0]
-        print(f"Converting {input_file} to QuestShell format...")
-        with open(input_file,'r',encoding='utf-8') as f: lines=f.readlines()
-        self.stats['total_lines']=len(lines)
-        steps=[]; loot_lines=[]; quest_titles={}
-        for ln,line in enumerate(lines,1):
-            raw=line.strip()
-            if (not raw or raw.startswith('--') or raw.startswith('TourGuide') or raw.startswith('return')
-                or raw.startswith('[[') or raw.startswith(']]') or raw in ['[[',']]'] or raw=='end)'):
-                self.stats['skipped_lines']+=1
+# -------------------- Quest DB --------------------
+def _walk_files(roots: Iterable[str], names: Iterable[str], max_depth: int = 6) -> List[str]:
+    seen = set()
+    found = []
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            continue
+        root = os.path.abspath(root)
+        for dirpath, dirnames, filenames in os.walk(root):
+            depth = os.path.relpath(dirpath, root).count(os.sep)
+            if depth > max_depth:
+                del dirnames[:]  # prune deep
                 continue
-            if raw.startswith('L '):
-                ld=self.convert_loot_line(line,ln)
-                if ld: loot_lines.append(ld)
+            for nm in names:
+                if nm in filenames:
+                    fp = os.path.join(dirpath, nm)
+                    if fp not in seen:
+                        seen.add(fp); found.append(fp)
+    return found
+
+def _parse_quests_lua_text(txt: str, quest_map: Dict[int,str]) -> None:
+    # simple mappings
+    for m in QL_SIMPLE_DQ.finditer(txt):
+        quest_map[int(m.group(1))] = m.group(2)
+    for m in QL_SIMPLE_SQ.finditer(txt):
+        quest_map[int(m.group(1))] = m.group(2)
+    for m in QL_NAME_DQ.finditer(txt):
+        quest_map[int(m.group(1))] = m.group(2)
+    for m in QL_NAME_SQ.finditer(txt):
+        quest_map[int(m.group(1))] = m.group(2)
+    # pfDB-style: extract ["T"]
+    for m in PFDB_ENTRY.finditer(txt):
+        qid = int(m.group(1))
+        body = m.group(2)
+        t = None
+        m1 = PFDB_T_DQ.search(body)
+        if m1:
+            t = m1.group(1)
+        else:
+            m2 = PFDB_T_SQ.search(body)
+            if m2:
+                t = m2.group(1)
+        if t is not None:
+            t = t.replace('\\"','"').replace("\\'", "'")
+            quest_map[qid] = t
+
+def load_quest_db(search_roots: List[str]) -> Dict[int, str]:
+    paths = list(dict.fromkeys([p for p in (search_roots or []) if p]))
+    cwd = os.getcwd()
+    if cwd not in paths: paths.append(cwd)
+
+    quest_map: Dict[int, str] = {}
+
+    # JSON exact + recursive
+    json_files = []
+    for d in paths:
+        jf = os.path.join(d, "quests_db.json")
+        if os.path.isfile(jf): json_files.append(jf)
+    if not json_files:
+        json_files = _walk_files(paths, ["quests_db.json"], max_depth=6)
+
+    for jf in json_files:
+        try:
+            with open(jf, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            for k, v in raw.items():
+                try:
+                    quest_map[int(k)] = str(v)
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    # Lua exact + recursive
+    lua_files = []
+    for d in paths:
+        lf = os.path.join(d, "quests.lua")
+        if os.path.isfile(lf): lua_files.append(lf)
+    if not lua_files:
+        lua_files = _walk_files(paths, ["quests.lua"], max_depth=6)
+
+    for lf in lua_files:
+        try:
+            txt = open(lf, "r", encoding="utf-8", errors="ignore").read()
+            _parse_quests_lua_text(txt, quest_map)
+        except Exception:
+            pass
+
+    return quest_map
+
+# -------------------- Step model --------------------
+@dataclass
+class Step:
+    type: str
+    title: str = ""
+    questId: Optional[int] = None
+    coords: Optional[Coord] = None
+    npc: Optional[NPC] = None
+    note: str = ""
+    itemId: Optional[int] = None
+    itemCount: Optional[int] = None
+    destination: Optional[str] = None
+    klass: Optional[str] = None
+    race: Optional[str] = None
+    line_num: int = 0
+    src_op: str = ""  # original TG opcode (A/T/C/L/K/...)
+
+    def to_lua(self) -> str:
+        fields: List[str] = [f'type="{self.type}"']
+
+        def add_str(key: str, val: Optional[str]):
+            if val is None or val == "":
+                return
+            s = val.replace('\\', '\\\\').replace('"', '\\"')
+            fields.append(f'{key}="{s}"')
+
+        def add_int(key: str, val: Optional[int]):
+            if val is None:
+                return
+            fields.append(f'{key}={val}')
+
+        def add_coords(c: Optional[Coord]):
+            if not c:
+                return
+            if "map" in c:
+                fields.append(f'coords={{ x={c["x"]}, y={c["y"]}, map="{c["map"]}" }}')
             else:
-                st=self.convert_line(line,ln)
-                if st:
-                    steps.append(st); self.stats['converted_steps']+=1
-                    if st.quest_id and st.step_type in ("ACCEPT","TURNIN","COMPLETE"):
-                        quest_titles[st.quest_id]=st.title
-                        self.quest_id_to_title[st.quest_id]=st.title
+                fields.append(f'coords={{ x={c["x"]}, y={c["y"]} }}')
 
-        if loot_lines: self.process_loot_lines(loot_lines, quest_titles, steps)
+        def add_npc(n: Optional[NPC]):
+            if not n:
+                return
+            fields.append(f'npc = {{ name="{n.get("name","")}" }}')
 
-        output=self.format_output(steps, guide_name)
-        with open(output_file,'w',encoding='utf-8') as f: f.write(output)
+        # restriction tags
+        add_str("class", self.klass)
+        add_str("race", self.race)
 
-        readme_file=output_file.replace('.lua','_README.md')
-        with open(readme_file,'w',encoding='utf-8') as f: f.write(self.generate_readme(guide_name, input_file, output_file))
+        t = self.type.upper()
 
-        # issues JSON
-        issues_json = output_file.replace('.lua','_issues.json')
-        try:
-            with open(issues_json,'w',encoding='utf-8') as jf:
-                json.dump([{
-                    'line_number': it.line_number,
-                    'issue_type': it.issue_type,
-                    'description': it.description,
-                    'original_line': it.original_line,
-                    'severity': it.severity,
-                } for it in self.issues], jf, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+        if t in ("ACCEPT", "TURNIN"):
+            add_str("title", self.title)
+            add_int("questId", self.questId)
+            add_coords(self.coords)
+            add_npc(self.npc)
+            add_str("note", self.note)
 
-        # mappings JSON (quests & items)
-        try:
-            mappings = {
-                'quests': {str(k): v for k, v in sorted(self.quest_id_to_title.items())},
-                'items': {str(k): v for k, v in sorted(self.item_id_to_name.items())}
+        elif t == "COMPLETE":
+            add_str("title", self.title)
+            add_int("questId", self.questId)
+            add_int("itemId", self.itemId)
+            if self.itemCount is not None:
+                add_int("itemCount", self.itemCount)
+            add_coords(self.coords)
+            add_str("note", self.note)
+
+        elif t == "SET_HEARTH":
+            add_str("title", self.title)
+            add_coords(self.coords)
+            add_npc(self.npc)
+            add_str("note", self.note)
+
+        elif t == "FLY":
+            add_coords(self.coords)
+            add_npc(self.npc)
+            add_str("destination", self.destination)
+            add_str("note", self.note)
+
+        elif t == "FLIGHTPATH":
+            add_npc(self.npc)
+            add_coords(self.coords)
+            add_str("note", self.note)
+
+        elif t == "TRAVEL":
+            add_coords(self.coords)
+            add_str("note", self.note)
+
+        elif t == "NOTE":
+            add_str("note", self.note if self.note else self.title)
+            add_coords(self.coords)
+
+        else:
+            add_str("title", self.title)
+            add_coords(self.coords)
+            if self.questId is not None and t != "NOTE":
+                add_int("questId", self.questId)
+            add_str("note", self.note)
+
+        return "{ " + ", ".join(fields) + " }"
+
+# -------------------- Converter --------------------
+class TourGuideConverter:
+    def __init__(self, quest_db_dirs: Optional[List[str]] = None):
+        self.stats = {"total_lines": 0, "converted_steps": 0, "issues_found": 0}
+        self._now = None
+        self.quest_titles: Dict[int, str] = {}
+        if quest_db_dirs:
+            self.quest_titles = load_quest_db(quest_db_dirs)
+
+    def convert_guide(self, input_path: str, output_path: Optional[str] = None, guide_name: Optional[str] = None):
+        from pathlib import Path
+
+        # Build search roots: input dir, its parent, CWD
+        roots = []
+        inp_dir = str(Path(input_path).parent)
+        roots.append(inp_dir)
+        roots.append(str(Path(inp_dir).parent))
+        roots.append(os.getcwd())
+
+        if not self.quest_titles:
+            self.quest_titles = load_quest_db(roots)
+
+        src = Path(input_path).read_text(encoding="utf-8", errors="ignore")
+
+        # Parse header for titles + faction
+        display_title, next_title, faction = parse_register_header(src)
+        min_level, max_level = parse_minmax_from_title(display_title)
+
+        # Build steps
+        steps = self._parse_tourguide(src)
+
+        # Merge multiple COMPLETE lines for the same quest into one
+        steps = self._merge_same_quest_completes(steps)
+
+        # Always prefer DB quest title when questId exists
+        for s in steps:
+            if s.questId and s.questId in self.quest_titles:
+                s.title = self.quest_titles[s.questId]
+
+        # Determine key (guide_name arg wins; otherwise sanitize from display title; fallback)
+        base_key = guide_name or (sanitize_key(display_title) if display_title else self._extract_guide_name(src) or "ConvertedGuide")
+        key = qs_prefixed(base_key)
+
+        out = self._render_lua(
+            key=key,
+            display_title=display_title or base_key,
+            next_title=next_title,
+            faction=faction,
+            min_level=min_level,
+            max_level=max_level,
+            steps=steps
+        )
+
+        # Default output filenames: QS_<input-stem>.lua and QS_<input-stem>_README.md
+        if not output_path:
+            in_stem = Path(input_path).stem
+            out_stem = in_stem if in_stem.startswith("QS_") else f"QS_{in_stem}"
+            output_path = str(Path(input_path).with_name(out_stem).with_suffix(".lua"))
+        Path(output_path).write_text(out, encoding="utf-8")
+
+        readme = self._render_readme(key, len(steps), display_title, next_title, faction)
+        # README next to output, with QS_ prefix
+        out_stem_for_readme = Path(output_path).stem
+        readme_path = str(Path(output_path).with_name(out_stem_for_readme + "_README.md"))
+        Path(readme_path).write_text(readme, encoding="utf-8")
+
+        return output_path, readme_path
+
+    def _extract_guide_name(self, src: str) -> Optional[str]:
+        m = re.search(r'TourGuide:RegisterGuide\("([^"]+)"', src)
+        if m:
+            title = m.group(1)
+            m2 = re.search(r'(.+)\s+\((\d+)\-(\d+)\)', title)
+            if m2:
+                zone = m2.group(1).strip().replace(" ", "_")
+                zone = re.sub(r'[^A-Za-z0-9_]', '', zone)
+                return f"{zone}_{m2.group(2)}_{m2.group(3)}"
+            return re.sub(r'[^A-Za-z0-9_]', '', title.replace(" ", "_"))
+        return None
+
+    def _parse_tourguide(self, src: str) -> List[Step]:
+        body_match = re.search(r'return\s+\[\[(.*)\]\]', src, re.S | re.I)
+        if not body_match:
+            return []
+
+        body = body_match.group(1)
+        lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
+        steps: List[Step] = []
+
+        for i, raw_line in enumerate(lines, start=1):
+            self.stats["total_lines"] += 1
+
+            # Drop TG tokens we don't support (e.g., |REACH|) before parsing
+            line = re.sub(r'\s*\|REACH\|', '', raw_line, flags=re.I)
+
+            op = line[:1]
+            rest = line[1:].strip() if len(line) > 1 else ""
+            qid = extract_qid(line)
+            note = extract_note(line)
+            coords = first_coords(line)
+            item_id = extract_item_use(line)            
+            klass = extract_class(line)
+            race = extract_race(line)
+
+            title = rest.split("|", 1)[0].strip()
+            title = clean_title(title)
+
+            type_map = {
+                "A": "ACCEPT",
+                "T": "TURNIN",
+                "C": "COMPLETE",
+                "R": "TRAVEL",
+                "h": "SET_HEARTH",
+                "F": "FLY",
+                "f": "FLIGHTPATH",
+                "N": "NOTE",
+                "L": "COMPLETE",
+                "K": "COMPLETE",
+                "B": "NOTE",
+                "b": "NOTE",
             }
-            map_file = output_file.replace('.lua','_mappings.json')
-            with open(map_file,'w',encoding='utf-8') as mf:
-                json.dump(mappings, mf, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            stype = type_map.get(op, "NOTE")
 
-        # conflicts JSON (summary of dup itemId name issues)
-        try:
-            conflicts = {
-                "generated": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                "events": self.item_conflicts,
-                "by_item_id": {
-                    str(item_id): {
-                        "canonical": self.item_id_to_name.get(item_id),
-                        "seen": self._item_id_names.get(item_id, [])
-                    } for item_id in sorted(set(self._item_id_names.keys()) | set(self.item_id_to_name.keys()))
-                }
-            }
-            conflicts_file = output_file.replace('.lua','_conflicts.json')
-            with open(conflicts_file,'w',encoding='utf-8') as cf:
-                json.dump(conflicts, cf, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
+            if is_buy_or_sell(line, title, note):
+                stype = "NOTE"
 
-        print("✅ Conversion complete!"); print(f"📄 Output: {output_file}"); print(f"📋 README: {readme_file}")
-        print(f"📊 Stats: {self.stats['converted_steps']}/{self.stats['total_lines']} lines converted"); print(f"⚠️  Issues: {self.stats['issues_found']} found")
-        return output_file, readme_file
+            npc = None
+            if stype in ("ACCEPT","TURNIN","SET_HEARTH","FLIGHTPATH","FLY"):
+                npc_name = infer_npc(note)
+                if npc_name:
+                    npc = {"name": npc_name}
 
-def main():
-    import argparse
-    p=argparse.ArgumentParser(description='Convert TourGuide format to QuestShell format')
-    p.add_argument('input'); p.add_argument('-o','--output'); p.add_argument('-n','--name'); p.add_argument('--batch')
-    a=p.parse_args()
-    if a.batch:
-        import glob
-        files=glob.glob(os.path.join(a.batch,"*.lua"))
-        print(f"🔄 Batch converting {len(files)} files...")
-        for f in files:
-            try:
-                conv=TourGuideConverter()
-                out=f.replace('.lua','_converted.lua'); name=os.path.splitext(os.path.basename(f))[0]
-                conv.convert_guide(f,out,name)
-                print(f"✅ {f} -> {out}")
-            except Exception as e:
-                print(f"❌ Failed to convert {f}: {e}")
-    else:
-        if not os.path.exists(a.input): print(f"❌ Input file not found: {a.input}"); sys.exit(1)
-        out=a.output or a.input.replace('.lua','_converted.lua'); name=a.name or os.path.splitext(os.path.basename(a.input))[0]
-        try:
-            conv=TourGuideConverter(); conv.convert_guide(a.input,out,name)
-        except Exception as e:
-            print(f"❌ Conversion failed: {e}"); sys.exit(1)
+            destination = None
+            if stype == "FLY":
+                m = re.search(r'fly\s+to\s+([A-Za-z\'\-\s]+)', f"{title} {note}", re.I)
+                if m:
+                    destination = m.group(1).strip()
 
-if __name__=="__main__":
-    main()
+            step = Step(
+                type=stype,
+                title=title,
+                questId=qid,
+                coords=coords,
+                npc=npc,
+                note=note,
+                itemId=item_id,
+                destination=destination,
+                klass=klass,
+                race=race,
+                line_num=i,
+                src_op=op
+            )
+            steps.append(step)
+            self.stats["converted_steps"] += 1
+
+        return steps
+
+    def _merge_same_quest_completes(self, steps: List[Step]) -> List[Step]:
+        merged: List[Step] = []
+        i = 0
+        n = len(steps)
+        while i < n:
+            s = steps[i]
+            if s.type == "COMPLETE" and s.questId:
+                notes = [s.note] if s.note else []
+                first_coords = s.coords
+                item_ids = []
+                if s.itemId:
+                    item_ids.append((s.itemId, s.itemCount))
+                j = i + 1
+                while j < n:
+                    t = steps[j]
+                    if t.type == "COMPLETE" and t.questId == s.questId:
+                        if t.note:
+                            notes.append(t.note)
+                        if t.itemId:
+                            item_ids.append((t.itemId, t.itemCount))
+                        if not first_coords and t.coords:
+                            first_coords = t.coords
+                        j += 1
+                    else:
+                        break
+                combined = Step(
+                    type="COMPLETE",
+                    title=s.title,
+                    questId=s.questId,
+                    coords=first_coords,
+                    note=" | ".join([x for x in notes if x]),
+                    itemId=item_ids[0][0] if item_ids else None,
+                    itemCount=item_ids[0][1] if (item_ids and item_ids[0][1] is not None) else None,
+                    klass=s.klass, race=s.race
+                )
+                merged.append(combined)
+                i = j
+            else:
+                merged.append(s)
+                i += 1
+        return merged
+
+    def _render_lua(self, key: str, display_title: str, next_title: Optional[str],
+                    faction: Optional[str], min_level: int, max_level: int, steps: List[Step]) -> str:
+        from datetime import datetime
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._now = now
+        lines: List[str] = []
+        lines.append("-- =========================")
+        lines.append(f"-- {key}.lua")
+        lines.append(f"-- Converted from TourGuide format on {now}")
+        lines.append("-- =========================\n")
+        lines.append("QuestShellGuides = QuestShellGuides or {}\n")
+        lines.append(f'QuestShellGuides["{key}"] = {{')
+        lines.append(f'  title    = "{display_title}",')
+        if next_title:
+            next_key = qs_prefixed(sanitize_key(next_title))
+            lines.append(f'  next     = "{next_title}",')
+            lines.append(f'  nextKey  = "{next_key}",')
+        if faction:
+            lines.append(f'  faction  = "{faction}",')
+        lines.append(f'  minLevel = {min_level},')
+        lines.append(f'  maxLevel = {max_level},')
+        lines.append('  steps = {')
+        for s in steps:
+            lines.append("    " + s.to_lua() + ",")
+        lines.append('  }')
+        lines.append('}\n')
+        return "\n".join(lines)
+
+    def _render_readme(self, key: str, step_count: int,
+                       display_title: Optional[str], next_title: Optional[str], faction: Optional[str]) -> str:
+        from datetime import datetime
+        now = self._now or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        meta = []
+        if display_title: meta.append(f"- Title: {display_title}")
+        if next_title:    meta.append(f"- Next: {next_title} (key: {qs_prefixed(sanitize_key(next_title))})")
+        if faction:       meta.append(f"- Faction: {faction}")
+        meta = "\\n".join(meta)
+
+        return f"""# Conversion Report: {key}
+
+- Date: {now}
+- Steps written: {step_count}
+{meta and meta or ""}
+
+## Emission Rules
+- Flat schema (no chapters). Fields at guide level: title, next?, nextKey?, faction?, minLevel, maxLevel, steps[].
+- COMPLETE  -> title, questId, itemId?, itemCount?, coords, note
+- ACCEPT    -> questId, title, npc, coords, note
+- TURNIN    -> questId, title, npc, coords, note
+- SET_HEARTH-> title, coords, npc, note
+- FLY       -> coords, npc, destination, note
+- FLIGHTPATH-> npc, coords, note
+- TRAVEL    -> coords, note
+- NOTE      -> note, coords
+
+## Extras
+- class/race restriction tags emitted when present.
+- Robust quests.lua parser incl. pfDB format; recursive search over provided roots.
+- NPC inference handles 'Speak to', 'Innkeeper', and ', in/at ...' forms.
+"""
+if __name__ == "__main__":
+    import sys
+    quest_dirs = []
+    # Usage: python3 converter.py <input.lua> [output.lua] [guide_key] [quest_dir ...]
+    if len(sys.argv) < 2:
+        print("Usage: python3 converter.py <input.lua> [output.lua] [guide_key] [quest_dir ...]")
+        sys.exit(1)
+    if len(sys.argv) >= 5:
+        quest_dirs = sys.argv[4:]
+    conv = TourGuideConverter(quest_dirs or None)
+    inp = sys.argv[1]
+    out = sys.argv[2] if len(sys.argv) >= 3 else None
+    key = sys.argv[3] if len(sys.argv) >= 4 else None
+    out_path, readme_path = conv.convert_guide(inp, out, key)
+    print("✅ Wrote:", out_path)
+    print("📝 Report:", readme_path)

@@ -5,6 +5,9 @@
 ## Version: 0.3
 ## SavedVariables: QuestShellDB
 
+## SavedVariables: QuestShellDB
+## SavedVariablesPerCharacter: QuestShellCDB
+
 core_utils.lua
 core_debug.lua
 core_debug_commands.lua
@@ -22,6 +25,5 @@ ui_steps.lua
 ui_menu.lua
 ui_options.lua
 
-guide_ne_1_60_teldrassil.lua
-guide_test.lua
-01_12_Teldrassil_converted.lua  
+QuestShell_Guides\Alliance\Guides.xml
+QuestShell_Guides\Horde\Guides.xml

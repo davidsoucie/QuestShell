@@ -1,218 +1,162 @@
 -- =========================
--- QuestShell UI — Gear Menu (Guides & Chapters)
--- Modal menu listing guides on the left and chapters on the right.
+-- QuestShell UI — Guides Popup (no chapters)
+-- Opaque black background (ignores global opacity).
+-- Vanilla/Turtle (Lua 5.0) safe.
 -- =========================
+
 QuestShellUI = QuestShellUI or {}
 
-local menuFrame, guidesScroll, chScroll, importBtn, optionsBtn
+-- ---------- locals ----------
+local popup, overlay, scroll, child
+local rowPool = {}
 
--- REPLACE the whole EnsureMenu(...) with this version
-local function EnsureMenu(parent)
-    if menuFrame then return end
-    menuFrame = CreateFrame("Frame", "QuestShellMenu", UIParent)
-    menuFrame:SetWidth(430); menuFrame:SetHeight(360)
-    menuFrame:SetBackdrop({
-        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
-        tile=true, tileSize=16, edgeSize=16,
-        insets={ left=6, right=6, top=6, bottom=6 }
-    })
-    menuFrame:SetBackdropColor(0,0,0,0.92)
-    menuFrame:EnableMouse(true)
-    menuFrame:SetMovable(true)
-    menuFrame:RegisterForDrag("LeftButton")
-    menuFrame:SetScript("OnDragStart", function() this:StartMoving() end)
-    menuFrame:SetScript("OnDragStop",  function() this:StopMovingOrSizing() end)
-
-    local title = menuFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    title:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", 10, -10)
-    title:SetText("|cffffff00QuestShell – Guides|r")
-
-    local close = CreateFrame("Button", nil, menuFrame, "UIPanelButtonTemplate")
-    close:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -10, -8)
-    close:SetWidth(60); close:SetHeight(20)
-    close:SetText("Close")
-    close:SetScript("OnClick", function() menuFrame:Hide() end)
-
-    local gbox = CreateFrame("Frame", nil, menuFrame)
-    gbox:SetWidth(190); gbox:SetHeight(280)
-    gbox:SetPoint("TOPLEFT", menuFrame, "TOPLEFT", 10, -40)
-    gbox:SetBackdrop({
-        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
-        tile=true, tileSize=16, edgeSize=16,
-        insets={ left=4, right=4, top=4, bottom=4 }
-    })
-    gbox:SetBackdropColor(0,0,0,0.25)
-
-    guidesScroll = CreateFrame("ScrollFrame", "QuestShellGuidesScroll", gbox, "UIPanelScrollFrameTemplate")
-    guidesScroll:SetPoint("TOPLEFT", gbox, "TOPLEFT", 4, -4)
-    guidesScroll:SetPoint("BOTTOMRIGHT", gbox, "BOTTOMRIGHT", -24, 4)
-    local gchild = CreateFrame("Frame", "QuestShellGuidesScrollChild", guidesScroll)
-    gchild:SetWidth(160); gchild:SetHeight(1)
-    guidesScroll:SetScrollChild(gchild)
-    gbox._child = gchild
-
-    local cbox = CreateFrame("Frame", nil, menuFrame)
-    cbox:SetWidth(190); cbox:SetHeight(280)
-    cbox:SetPoint("TOPRIGHT", menuFrame, "TOPRIGHT", -10, -40)
-    cbox:SetBackdrop({
-        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
-        tile=true, tileSize=16, edgeSize=16,
-        insets={ left=4, right=4, top=4, bottom=4 }
-    })
-    cbox:SetBackdropColor(0,0,0,0.25)
-
-    chScroll = CreateFrame("ScrollFrame", "QuestShellChaptersScroll", cbox, "UIPanelScrollFrameTemplate")
-    chScroll:SetPoint("TOPLEFT", cbox, "TOPLEFT", 4, -4)
-    chScroll:SetPoint("BOTTOMRIGHT", cbox, "BOTTOMRIGHT", -24, 4)
-    local cchild = CreateFrame("Frame", "QuestShellChaptersScrollChild", chScroll)
-    cchild:SetWidth(160); cchild:SetHeight(1)
-    chScroll:SetScrollChild(cchild)
-    cbox._child = cchild
-
-    importBtn = CreateFrame("Button", nil, menuFrame, "UIPanelButtonTemplate")
-    importBtn:SetPoint("BOTTOMLEFT", menuFrame, "BOTTOMLEFT", 10, 10)
-    importBtn:SetWidth(100); importBtn:SetHeight(22)
-    importBtn:SetText("Import guide")
-    importBtn:SetScript("OnClick", function()
-        if QuestShellUI and QuestShellUI.ShowImport then
-            QuestShellUI.ShowImport()
-        else
-            UIErrorsFrame:AddMessage("Importer not installed.", 1,0.4,0.4, 1.0, 3)
-        end
-    end)
-
-    optionsBtn = CreateFrame("Button", nil, menuFrame, "UIPanelButtonTemplate")
-    optionsBtn:SetPoint("LEFT", importBtn, "RIGHT", 8, 0)
-    optionsBtn:SetWidth(80); optionsBtn:SetHeight(22)
-    optionsBtn:SetText("Options")
-    optionsBtn:SetScript("OnClick", function()
-        if QuestShellUI and QuestShellUI.ShowOptions then
-            QuestShellUI.ShowOptions()
-        else
-            UIErrorsFrame:AddMessage("Options UI missing.", 1,0.4,0.4, 1.0, 3)
-        end
-    end)
+local function _GuideMeta(name)
+    if QS_GuideMeta then return QS_GuideMeta(name) end
+    local g = QuestShellGuides and QuestShellGuides[name]
+    if type(g) == "table" then return g end
+    return { title = tostring(name or "?"), steps = {} }
 end
 
-
-local function RefreshChaptersForGuide(name)
-    if not chScroll then return end
-    local parent = chScroll:GetScrollChild()
-    local chapters = {}
-    if QS_ChapterCount and QS_ChapterMeta then
-        if name ~= (QuestShell and QuestShell.activeGuide) then
-            local g = QuestShellGuides and QuestShellGuides[name]
-            if g and g.chapters then chapters = g.chapters
-            else
-                local steps = (g and g.steps) or g or {}
-                chapters = { { title = name, steps = steps } }
-            end
-        else
-            local n = QS_ChapterCount(name)
-            local i = 1
-            while i <= n do
-                chapters[i] = QS_ChapterMeta(i)
-                i = i + 1
-            end
-        end
-    end
-
-    local y = -4
-    local rows = parent._rows or {}
-    local i = 1
-    while i <= table.getn(chapters) do
-        local b = rows[i]
-        if not b then
-            b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-            rows[i] = b
-            b:SetHeight(20)
-            b:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
-            b:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
-            b:SetText("...")
-            b:SetScript("OnClick", function()
-                if QuestShell and QuestShell.LoadGuide then QuestShell.LoadGuide(b._guide) end
-                if QuestShell and QuestShell.SetChapter then QuestShell.SetChapter(b._ch) end
-            end)
-        end
-        local meta = chapters[i]
-        local title = (meta and meta.title) or ("Chapter "..i)
-        local minL = meta and meta.minLevel or "?"
-        local maxL = meta and meta.maxLevel or "?"
-        b:SetText(i..". "..title.."  "..tostring(minL).."-"..tostring(maxL))
-        b._guide = name
-        b._ch = i
-        b:Show()
-        y = y - 22
-        i = i + 1
-    end
-    while rows[i] do rows[i]:Hide(); i = i + 1 end
-    parent._rows = rows
-    parent:SetHeight(-y + 4)
+local function _AllGuidesOrdered()
+    if QS_AllGuidesOrdered then return QS_AllGuidesOrdered() end
+    local t, i = {}, 1
+    for k,_ in pairs(QuestShellGuides or {}) do t[i] = k; i = i + 1 end
+    table.sort(t)
+    return t
 end
 
-local function RefreshGuides()
-    if not guidesScroll then return end
-    local parent = guidesScroll:GetScrollChild()
-    local names = {}
-    local k
-    for k,_ in pairs(QuestShellGuides or {}) do names[table.getn(names)+1] = k end
-    table.sort(names, function(a,b)
-        local A = QuestShellGuides[a]; local B = QuestShellGuides[b]
-        local amin = (A and A.minLevel) or 0; local bmin = (B and B.minLevel) or 0
-        if amin ~= bmin then return amin < bmin end
-        local amax = (A and A.maxLevel) or 0; local bmax = (B and B.maxLevel) or 0
-        if amax ~= bmax then return amax < bmax end
-        return a < b
-    end)
+local function _FmtTitle(meta)
+    local title = (meta and meta.title) or "Guide"
+    local a,b = meta and meta.minLevel, meta and meta.maxLevel
+    if a or b then title = string.format("%s  %s-%s", title, tostring(a or "?"), tostring(b or "?")) end
+    return title
+end
 
-    local y = -4
-    local rows = parent._rows or {}
-    local i = 1
-    while i <= table.getn(names) do
-        local b = rows[i]
-        if not b then
-            b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-            rows[i] = b
-            b:SetHeight(20)
-            b:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, y)
-            b:SetPoint("RIGHT", parent, "RIGHT", 0, 0)
-            b:SetText("...")
-            b:SetScript("OnClick", function()
-                RefreshChaptersForGuide(b._name)
-            end)
-        end
-        local meta = QuestShellGuides[names[i]]
-        local title = (meta and meta.title) or names[i]
-        local minL = (meta and meta.minLevel) or "?"
-        local maxL = (meta and meta.maxLevel) or "?"
-        b:SetText(title.."  "..tostring(minL).."-"..tostring(maxL))
-        b._name = names[i]
-        b:Show()
-        y = y - 22
+local function _AcquireRow(i)
+    if rowPool[i] then return rowPool[i] end
+    local r = CreateFrame("Button", "QuestShellGuideRow"..tostring(i), child)
+    r:SetHeight(20)
+
+    r.bg = r:CreateTexture(nil, "BACKGROUND")
+    r.bg:SetAllPoints(r)
+    r.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
+    r.bg:SetVertexColor(1,1,1,0) -- zebra is drawn per-row
+
+    r.hl = r:CreateTexture(nil, "HIGHLIGHT")
+    r.hl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
+    r.hl:SetBlendMode("ADD")
+    r.hl:SetAlpha(0.18)
+    r.hl:SetAllPoints(r)
+
+    r.check = r:CreateTexture(nil, "ARTWORK")
+    r.check:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
+    r.check:SetWidth(14); r.check:SetHeight(14)
+    r.check:SetPoint("LEFT", r, "LEFT", 6, 0)
+    r.check:Hide()
+
+    r.text = r:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    r.text:SetPoint("LEFT", r, "LEFT", 24, 0)
+    r.text:SetPoint("RIGHT", r, "RIGHT", -6, 0)
+    r.text:SetJustifyH("LEFT")
+
+    rowPool[i] = r
+    return r
+end
+
+local function _ReleaseRows(fromIndex)
+    local i = fromIndex
+    while rowPool[i] do rowPool[i]:Hide(); i = i + 1 end
+end
+
+local function _EnsurePopup()
+    if popup then return end
+
+    overlay = CreateFrame("Button", "QuestShellGuidesOverlay", UIParent)
+    overlay:SetAllPoints(UIParent)
+    overlay:SetFrameStrata("FULLSCREEN_DIALOG")
+    overlay:EnableMouse(true)
+    overlay:SetScript("OnClick", function() popup:Hide() end)
+    overlay:Hide()
+
+    popup = CreateFrame("Frame", "QuestShellGuidesPopup", UIParent)
+    popup:SetWidth(300); popup:SetHeight(280)
+    popup:SetFrameStrata("FULLSCREEN_DIALOG")
+    popup:SetBackdrop({
+        -- OPAQUE black background
+        bgFile="Interface\\Buttons\\WHITE8x8",
+        edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
+        tile=true, tileSize=16, edgeSize=12,
+        insets={ left=4, right=4, top=4, bottom=4 }
+    })
+    popup:SetBackdropColor(0,0,0,1.0) -- force solid
+
+    local titleFS = popup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleFS:SetPoint("TOPLEFT", popup, "TOPLEFT", 8, -6)
+    titleFS:SetText("QuestShell – Guides")
+
+    scroll = CreateFrame("ScrollFrame", "QuestShellGuidesScroll", popup, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", popup, "TOPLEFT", 8, -28)
+    scroll:SetPoint("BOTTOMRIGHT", popup, "BOTTOMRIGHT", -28, 8)
+
+    child = CreateFrame("Frame", "QuestShellGuidesScrollChild", scroll)
+    scroll:SetScrollChild(child)
+    child:SetWidth(300-8-28)
+    child:SetHeight(1)
+
+    popup:SetScript("OnShow", function() overlay:Show() end)
+    popup:SetScript("OnHide", function() overlay:Hide() end)
+    popup:Hide()
+end
+
+local function _RefreshList()
+    if not popup then return end
+    local names = _AllGuidesOrdered()
+    local y, i = 0, 1
+    local cur = QuestShell and QuestShell.activeGuide
+
+    while names[i] do
+        local key = names[i]
+        local meta = _GuideMeta(key)
+        local row = _AcquireRow(i)
+
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
+        row:SetPoint("RIGHT", child, "RIGHT", 0, 0)
+
+        row.text:SetText(_FmtTitle(meta))
+        if key == cur then row.check:Show() else row.check:Hide() end
+
+        local zebra = (math.mod(i, 2) == 0) and 0.1 or 0.1
+        row.bg:SetVertexColor(1,1,1, key == cur and 0.12 or zebra)
+
+        row:SetScript("OnClick", function()
+            if QuestShell and QuestShell.LoadGuide then QuestShell.LoadGuide(key) end
+            popup:Hide()
+        end)
+
+        row:Show()
+        y = y + 22
         i = i + 1
     end
-    while rows[i] do rows[i]:Hide(); i = i + 1 end
-    parent._rows = rows
-    parent:SetHeight(-y + 4)
 
-    if QuestShell and QuestShell.activeGuide then
-        RefreshChaptersForGuide(QuestShell.activeGuide)
-    end
+    _ReleaseRows(i)
+    child:SetHeight(math.max(1, y))
 end
 
 function QuestShellUI.ToggleMenu(anchor)
-    EnsureMenu()
-    if menuFrame:IsShown() then
-        menuFrame:Hide()
+    _EnsurePopup()
+    if popup:IsShown() then
+        popup:Hide()
     else
-        if anchor then
-            menuFrame:ClearAllPoints()
-            menuFrame:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -6)
-        end
-        RefreshGuides()
-        menuFrame:Show()
+        popup:ClearAllPoints()
+        if anchor then popup:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -2, -2)
+        else popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0) end
+        _RefreshList()
+        popup:Show()
     end
+end
+
+-- keep for API symmetry, but menu ignores global alpha on purpose
+function QuestShellUI.ApplyAlpha_Menu()
+    if popup then popup:SetBackdropColor(0,0,0,1.0) end
 end

@@ -31,14 +31,11 @@ function QS_UI_FullBody(step, progressText)
 end
 
 -- ===== Unified toggle logic for steps =====
-local function QS_UI_GetState()
-    if not (QuestShell and QuestShell.activeGuide and QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[QuestShell.activeGuide]) then
-        return nil
-    end
-    local st = QuestShellDB.guides[QuestShell.activeGuide]
-    st.completedByChapter = st.completedByChapter or {}
-    local ch = st.currentChapter or 1
-    local arr = st.completedByChapter[ch] or {}
+function QS_UI_GetState()
+    local st = QS_GuideState and QS_GuideState() or nil
+    if not st then return nil, 1, {} end
+    local ch = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
+    local arr = (st.completedByChapter and st.completedByChapter[ch]) or {}
     return st, ch, arr
 end
 
@@ -88,4 +85,28 @@ function QS_UI_SetStepCompleted(index, completed)
 
     if QuestShellUI.UpdateList then QuestShellUI.UpdateList(steps, st.currentStep, set) end
     if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
+
+        -- --- NEW: auto-advance when the last eligible step is checked ---
+    if completed then
+        -- Are all eligible steps in this chapter done?
+        local allDone = true
+        local j = 1
+        while j <= n do
+            local eligible = (not QS_StepIsEligible) or QS_StepIsEligible(steps[j])
+            if eligible and (not set[j]) then allDone = false; break end
+            j = j + 1
+        end
+
+        if allDone then
+            -- If there are more chapters, go to the next chapter; else chain to next guide
+            local totalCh = (QS_ChapterCount and QS_ChapterCount()) or 1
+            if ch < totalCh and QuestShell and QuestShell.SetChapter then
+                QuestShell.SetChapter(ch + 1)
+                return
+            end
+            -- Entire guide finished → prefer nextKey if present
+            if QS_LoadNextGuideIfAny then QS_LoadNextGuideIfAny() end
+            return
+        end
+    end
 end

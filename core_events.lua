@@ -279,6 +279,7 @@ local function QS__FindNextEligibleIncomplete(steps, completedSet, fromIndex)
 end
 
 -- Find the item we should consider as "use-item" for this step (id and/or name)
+-- Find the item we should consider as "use-item" for this step (id and/or name)
 local function QS__UseItemSpecForStep(step)
     if not step then return nil, nil end
     local stype = string.upper(step.type or "")
@@ -288,18 +289,25 @@ local function QS__UseItemSpecForStep(step)
         return step.itemId, step.itemName
     end
 
-    -- COMPLETE steps with objectives including { kind="use_item", ... }
-    if stype == "COMPLETE" and step.objectives and type(step.objectives) == "table" then
-        local i = 1
-        while step.objectives[i] do
-            local o = step.objectives[i]
-            if o and string.lower(o.kind or "") == "use_item" then
-                -- Prefer ID, but fallback to label (item name)
-                return o.itemId, (o.label or step.itemName)
+    -- COMPLETE steps: accept either an objective {kind="use_item", ...} OR a top-level itemId/itemName
+    if stype == "COMPLETE" then
+        -- objectives path
+        if step.objectives and type(step.objectives) == "table" then
+            local i = 1
+            while step.objectives[i] do
+                local o = step.objectives[i]
+                if o and string.lower(o.kind or "") == "use_item" then
+                    return o.itemId, (o.label or step.itemName)
+                end
+                i = i + 1
             end
-            i = i + 1
+        end
+        -- top-level item fallback
+        if step.itemId or step.itemName then
+            return step.itemId, step.itemName
         end
     end
+
     return nil, nil
 end
 
@@ -361,15 +369,15 @@ end
 -- ------------------------------------------------------------
 -- Step advancement that skips steps already checked
 -- ------------------------------------------------------------
+-- Advance current step; mark current complete unless markCurrentComplete == false
 function QS_AdvanceStep(markCurrentComplete)
-    -- state
-    if not QuestShellDB or not QuestShellDB.guides or not QuestShell.activeGuide then return end
-    local st = QuestShellDB.guides[QuestShell.activeGuide]; if not st then return end
+    local st = QS_GuideState and QS_GuideState() or nil
+    if not st then return end
 
     local chapter = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
     st.completedByChapter = st.completedByChapter or {}
 
-    -- saved shape is an ARRAY of completed indices → build a SET for work
+    -- build a SET of completed indices from saved ARRAY
     local arr = st.completedByChapter[chapter] or {}
     local set = {}
     local i = 1
@@ -380,35 +388,46 @@ function QS_AdvanceStep(markCurrentComplete)
     if n == 0 then return end
 
     local cur = st.currentStep or 1
-    if QS_D then QS_D("Current Step (Cur) "..(cur or "")) end
-    if cur < 1 then cur = 1 end
-    if cur > n then cur = n end
+    if cur < 1 then cur = 1 elseif cur > n then cur = n end
 
-    -- mark current as completed unless explicitly told not to
-    if markCurrentComplete ~= false then
-        set[cur] = true
-    end
+    -- mark current as completed unless told not to
+    if markCurrentComplete ~= false then set[cur] = true end
 
     -- clear transient trackers
     if QuestShellUI and QuestShellUI.ArrowClear then QuestShellUI.ArrowClear() end
     if itemTrack then
-        itemTrack.itemId = nil
-        itemTrack.itemName = nil
-        itemTrack.prevCount = nil
+        itemTrack.itemId, itemTrack.itemName, itemTrack.prevCount = nil, nil, nil
         itemTrack.lastChangeTime = 0
     end
 
-    -- find next eligible, incomplete step AFTER current (class-gated aware)
-    local nextIdx = QS__FindNextEligibleIncomplete and QS__FindNextEligibleIncomplete(steps, set, cur) or (cur + 1)
+    -- find next eligible, incomplete step AFTER current
+    local nextIdx = (QS__FindNextEligibleIncomplete and QS__FindNextEligibleIncomplete(steps, set, cur)) or (cur + 1)
     st.currentStep = nextIdx
 
-    -- WRITE BACK as ARRAY (ascending) — this is what UIs expect
-    local out = {}
-    i = 1
-    while i <= n do if set[i] then out[table.getn(out)+1] = i end i = i + 1 end
+    -- past end of chapter?
+    if nextIdx > n then
+        local totalCh = (QS_ChapterCount and QS_ChapterCount()) or 1
+        local curCh   = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
+
+        -- write back completed array for this chapter
+        local out = {}; local k=1; while k<=n do if set[k] then out[table.getn(out)+1] = k end k=k+1 end
+        st.completedByChapter[chapter] = out
+
+        if curCh < totalCh then
+            if QuestShell and QuestShell.SetChapter then QuestShell.SetChapter(curCh + 1) end
+            if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
+            return
+        else
+            -- whole guide done → try nextKey / next guide
+            if QS_LoadNextGuideIfAny and QS_LoadNextGuideIfAny() then return end
+            st.currentStep = n -- clamp for UI
+        end
+    end
+
+    -- write back completed array (ascending)
+    local out = {}; local j=1; while j<=n do if set[j] then out[table.getn(out)+1] = j end j=j+1 end
     st.completedByChapter[chapter] = out
 
-    -- refresh all UI + (re)prime arrow/behaviors through your normal path
     if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
 end
 
@@ -671,6 +690,18 @@ ev:SetScript("OnEvent", function()
     end
 
     if event == "VARIABLES_LOADED" or event == "PLAYER_ENTERING_WORLD" then
+        -- try to restore last guide
+        if QuestShellDB and QuestShellDB.lastActiveGuide
+        and QuestShellGuides and QuestShellGuides[QuestShellDB.lastActiveGuide] then
+            QuestShell.activeGuide = QuestShellDB.lastActiveGuide
+        end
+
+        -- if still nil/invalid, pick race-based default
+        if (not QuestShell.activeGuide) or (not QuestShellGuides) or (not QuestShellGuides[QuestShell.activeGuide]) then
+            if QS_SelectDefaultGuideIfNeeded then QS_SelectDefaultGuideIfNeeded() end
+        end
+
+        if QS_EnsureDB then QS_EnsureDB() end
         if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
         return
 

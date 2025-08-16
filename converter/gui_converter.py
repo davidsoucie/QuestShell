@@ -122,8 +122,8 @@ class ConverterGUI:
 
 📋 OUTPUT FILES:
 For each converted file, you get:
-• filename_converted.lua (QuestShell format)
-• filename_README.md (conversion report)
+• QS_<input-stem>.lua (QuestShell format)
+• QS_<input-stem>_README.md (conversion report)
 
 ⚠️ REQUIREMENTS:
 • Both .py files must be in same folder
@@ -158,10 +158,14 @@ Put all 40 TourGuide files in one folder, then use
         """Worker thread for single file conversion"""
         try:
             converter = TourGuideConverter()
-            output_file = file_path.replace('.lua', '_converted.lua')
-            guide_name = os.path.splitext(os.path.basename(file_path))[0]
+            # Build QS_<stem>.lua output path and let converter use it
+            base = os.path.basename(file_path)
+            stem, ext = os.path.splitext(base)
+            out_stem = f"QS_{stem}"
+            output_file = os.path.join(os.path.dirname(file_path), f"{out_stem}{ext}")
             
-            output_file, readme_file = converter.convert_guide(file_path, output_file, guide_name)
+            # guide_name can be None; converter derives and prefixes internally if needed
+            output_file, readme_file = converter.convert_guide(file_path, output_file, None)
             
             self.log(f"✅ SUCCESS! Converted {os.path.basename(file_path)}")
             self.log(f"📄 Output: {os.path.basename(output_file)}")
@@ -217,10 +221,12 @@ Put all 40 TourGuide files in one folder, then use
             
             try:
                 converter = TourGuideConverter()
-                output_file = file_path.replace('.lua', '_converted.lua')
-                guide_name = os.path.splitext(lua_file)[0]
+                # Build QS_<stem>.lua output path
+                stem, ext = os.path.splitext(lua_file)
+                out_stem = f"QS_{stem}"
+                output_file = os.path.join(folder_path, f"{out_stem}{ext}")
                 
-                output_file, readme_file = converter.convert_guide(file_path, output_file, guide_name)
+                output_file, readme_file = converter.convert_guide(file_path, output_file, None)
                 
                 steps = converter.stats['converted_steps']
                 issues = converter.stats['issues_found']
@@ -228,7 +234,7 @@ Put all 40 TourGuide files in one folder, then use
                 total_issues += issues
                 
                 status = "✅" if issues == 0 else "⚠️"
-                self.log(f"        {status} {steps} steps, {issues} issues")
+                self.log(f"        {status} {steps} steps, {issues} issues → {os.path.basename(output_file)}")
                 successful += 1
                 
             except Exception as e:
