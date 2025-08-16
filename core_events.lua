@@ -410,6 +410,33 @@ function QS_AdvanceStep(markCurrentComplete)
     local nextIdx = QS__FindNextEligibleIncomplete and QS__FindNextEligibleIncomplete(steps, set, cur) or (cur + 1)
     st.currentStep = nextIdx
 
+    -- If we passed the end of the current chapter, move on.
+    if nextIdx > n then
+        local totalCh = (QS_ChapterCount and QS_ChapterCount()) or 1
+        local curCh   = (QS_CurrentChapterIndex and QS_CurrentChapterIndex()) or 1
+
+        if curCh < totalCh then
+            -- Advance to next chapter and normalize
+            if QuestShell and QuestShell.SetChapter then
+                QuestShell.SetChapter(curCh + 1)
+            end
+            -- write back completed array before exiting
+            local out = {}; local i2=1; while i2 <= n do if set[i2] then out[table.getn(out)+1] = i2 end i2=i2+1 end
+            st.completedByChapter[chapter] = out
+            if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
+            return
+        else
+            -- Entire guide finished → load next guide (prefer nextKey)
+            local out = {}; local i2=1; while i2 <= n do if set[i2] then out[table.getn(out)+1] = i2 end i2=i2+1 end
+            st.completedByChapter[chapter] = out
+            if QS_LoadNextGuideIfAny and QS_LoadNextGuideIfAny() then
+                return
+            end
+            -- If no next guide, clamp to last step (for UI)
+            st.currentStep = n
+        end
+    end
+
     -- WRITE BACK as ARRAY (ascending) — this is what UIs expect
     local out = {}
     i = 1
@@ -679,6 +706,18 @@ ev:SetScript("OnEvent", function()
     end
 
     if event == "VARIABLES_LOADED" or event == "PLAYER_ENTERING_WORLD" then
+        -- try to restore last guide
+        if QuestShellDB and QuestShellDB.lastActiveGuide
+        and QuestShellGuides and QuestShellGuides[QuestShellDB.lastActiveGuide] then
+            QuestShell.activeGuide = QuestShellDB.lastActiveGuide
+        end
+
+        -- if still nil/invalid, pick race-based default
+        if (not QuestShell.activeGuide) or (not QuestShellGuides) or (not QuestShellGuides[QuestShell.activeGuide]) then
+            if QS_SelectDefaultGuideIfNeeded then QS_SelectDefaultGuideIfNeeded() end
+        end
+
+        if QS_EnsureDB then QS_EnsureDB() end
         if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
         return
 

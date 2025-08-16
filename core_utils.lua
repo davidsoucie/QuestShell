@@ -6,7 +6,6 @@
 
 QuestShell = QuestShell or {}
 -- default guide on startup
-if QuestShell.activeGuide == nil then QuestShell.activeGuide = "Test" end
 if QuestShell.debug == nil then QuestShell.debug = true end
 
 function QS_Print(m) if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[QuestShell]|r "..tostring(m)) end end
@@ -23,6 +22,10 @@ function QS_EnsureDB()
     if not QuestShellDB then QuestShellDB = { guides = {}, ui = {} } end
     if not QuestShellDB.guides then QuestShellDB.guides = {} end
     if not QuestShellDB.ui then QuestShellDB.ui = {} end
+    if QuestShellDB.lastActiveGuide == nil then QuestShellDB.lastActiveGuide = nil end
+
+    -- If there is no active guide yet, we only ensure top-level tables.
+    if not QuestShell.activeGuide then return end
 
     if not QuestShellDB.guides[QuestShell.activeGuide] then
         QuestShellDB.guides[QuestShell.activeGuide] = {
@@ -31,13 +34,10 @@ function QS_EnsureDB()
             completedByChapter = {},
         }
     else
-        -- migrate old shape (pre-chapters)
         local st = QuestShellDB.guides[QuestShell.activeGuide]
         if not st.currentChapter then st.currentChapter = 1 end
         if st.completedSteps and not st.completedByChapter then
-            st.completedByChapter = {}
-            st.completedByChapter[1] = st.completedSteps
-            st.completedSteps = nil
+            st.completedByChapter = {}; st.completedByChapter[1] = st.completedSteps; st.completedSteps = nil
         end
         if not st.currentStep then st.currentStep = 1 end
     end
@@ -66,6 +66,54 @@ function QS_StepIsEligible(step)
   end
 
   return true
+end
+
+-- Normalize player race -> "NIGHTELF", "DWARF", etc. (spaces removed)
+local function QS__PlayerRaceKey()
+    local r = UnitRace and UnitRace("player") or ""
+    r = string.upper(r or "")
+    r = string.gsub(r, "%s+", "")  -- "Night Elf" -> "NIGHTELF"
+    return r
+end
+
+-- Find first guide whose startingRace contains the player's race
+function QS_PickDefaultGuideForPlayer()
+    local want = QS__PlayerRaceKey()
+    local best = nil
+    for key, g in pairs(QuestShellGuides or {}) do
+        local sr = g and g.startingRace
+        if type(sr) == "string" then
+            local v = string.upper(string.gsub(sr, "%s+", ""))
+            if v == want then best = key; break end
+        elseif type(sr) == "table" then
+            local i=1
+            while sr[i] do
+                local v = string.upper(string.gsub(sr[i] or "", "%s+", ""))
+                if v == want then best = key; break end
+                i=i+1
+            end
+            if best then break end
+        end
+    end
+    return best
+end
+
+-- Select a default guide if current is missing/invalid
+function QS_SelectDefaultGuideIfNeeded()
+    if QuestShell.activeGuide and QuestShellGuides and QuestShellGuides[QuestShell.activeGuide] then
+        return -- already valid
+    end
+    local def = QS_PickDefaultGuideForPlayer and QS_PickDefaultGuideForPlayer() or nil
+    if not def then
+        -- Fallback: lowest-level guide
+        local names = QS_AllGuidesOrdered and QS_AllGuidesOrdered() or {}
+        def = names[1]
+    end
+    if def then
+        QuestShell.activeGuide = def
+        QS_EnsureDB()
+        QS_Print("Default guide set to: "..tostring(def))
+    end
 end
 
 -- --- Bag / Item helpers (Lua 5.0 safe) --------------------

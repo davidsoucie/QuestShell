@@ -67,8 +67,62 @@ function QS_ChapterCount(name)
     return 1
 end
 
+-- Return true if every eligible step across all chapters is completed
+function QS_GuideIsFullyComplete()
+    local st = QS_GuideState and QS_GuideState() or nil
+    if not st then return false end
+
+    local chCount = (QS_ChapterCount and QS_ChapterCount()) or 1
+    local ch = 1
+    while ch <= chCount do
+        local meta = QS_ChapterMeta and QS_ChapterMeta(ch) or nil
+        local steps = (meta and meta.steps) or {}
+        local doneArr = (st.completedByChapter and st.completedByChapter[ch]) or {}
+        local doneSet = {}
+        local i = 1
+        while doneArr[i] do doneSet[doneArr[i]] = true; i = i + 1 end
+
+        local n = table.getn(steps or {})
+        local s = 1
+        while s <= n do
+            local step = steps[s]
+            local eligible = (not QS_StepIsEligible) and true or QS_StepIsEligible(step)
+            if eligible and (not doneSet[s]) then
+                return false
+            end
+            s = s + 1
+        end
+        ch = ch + 1
+    end
+    return true
+end
+
+-- If fully complete, try to chain to next guide (returns true if chained)
+function QS_GuideTryAutoChain()
+    if QS_GuideIsFullyComplete and QS_GuideIsFullyComplete() then
+        if QS_LoadNextGuideIfAny and QS_LoadNextGuideIfAny() then
+            return true
+        end
+    end
+    return false
+end
+
 -- ----- Saved state accessors -----
 function QS_GuideState()
+    -- Ensure top-level DB tables exist
+    if QS_EnsureDB then QS_EnsureDB() end
+
+    -- If no active guide yet, select one (by startingRace or fallback)
+    if (not QuestShell.activeGuide) or (not QuestShellGuides) or (not QuestShellGuides[QuestShell.activeGuide]) then
+        if QS_SelectDefaultGuideIfNeeded then QS_SelectDefaultGuideIfNeeded() end
+        -- Ensure DB now that activeGuide may have been set
+        if QS_EnsureDB then QS_EnsureDB() end
+    end
+
+    -- Final safeguard: if still missing, return a dummy table to avoid nil indexing
+    if not QuestShell.activeGuide then
+        return { currentChapter = 1, currentStep = 1, completedByChapter = { [1] = {} } }
+    end
     return QuestShellDB.guides[QuestShell.activeGuide]
 end
 
@@ -202,12 +256,17 @@ function QuestShell.LoadGuide(name)
     QuestShell.activeGuide = name
     QS_EnsureDB()
 
+    -- NEW: remember across /reload
+    QuestShellDB = QuestShellDB or {}
+    QuestShellDB.lastActiveGuide = name
+
     local st = QuestShellDB.guides[name]
-    st.currentChapter = 1
-    st.currentStep    = 1
+
+    -- Only initialize if first time
+    if not st.currentChapter then st.currentChapter = 1 end
+    if not st.currentStep    then st.currentStep    = 1 end
     st.completedByChapter = st.completedByChapter or {}
 
-    -- normalize to first eligible & incomplete step
     if QS_NormalizeCurrentStep then QS_NormalizeCurrentStep() end
 
     local meta = QS_GuideMeta(name)
@@ -220,20 +279,32 @@ function QuestShell.LoadGuide(name)
     QS_UI_RefreshAll()
 end
 
-
 -- Advance to next guide in ordered list, if any
 function QS_LoadNextGuideIfAny()
-    local names = QS_AllGuidesOrdered()
-    local cur = QuestShell.activeGuide
+    local cur  = QuestShell.activeGuide
+    local meta = (QS_GuideMeta and QS_GuideMeta(cur)) or (QuestShellGuides and QuestShellGuides[cur]) or nil
+
+    -- Prefer explicit nextKey if it exists
+    local nk = meta and meta.nextKey
+    if nk and QuestShellGuides and QuestShellGuides[nk] and nk ~= cur then
+        QS_Print("Guide complete. Loading next (nextKey): "..tostring(nk))
+        QuestShell.LoadGuide(nk)
+        return true
+    end
+
+    -- Fallback: ordered progression
+    local names = QS_AllGuidesOrdered and QS_AllGuidesOrdered() or {}
     local idx, n = nil, table.getn(names)
     local i = 1
-    while i <= n do if names[i] == cur then idx = i break end i = i + 1 end
+    while i <= n do if names[i] == cur then idx = i; break end i = i + 1 end
     if idx and idx < n then
-        local nextName = names[idx+1]
-        QS_Print("Guide complete. Loading next: "..nextName)
+        local nextName = names[idx + 1]
+        QS_Print("Guide complete. Loading next: "..tostring(nextName))
         QuestShell.LoadGuide(nextName)
         return true
     end
+
+    QS_Print("Guide complete. No next guide found.")
     return false
 end
 
@@ -255,3 +326,27 @@ function QuestShell.JumpToStep(idx)
     if QS_UI_RefreshAll then QS_UI_RefreshAll() elseif QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
 end
 
+-- Restore last active guide (runs on VARIABLES_LOADED)
+do
+    local boot = CreateFrame("Frame")
+    boot:RegisterEvent("VARIABLES_LOADED")
+    boot:SetScript("OnEvent", function()
+        -- Ensure saved vars table exists
+        QS_EnsureDB()
+
+        -- 1) If we have a saved lastActiveGuide and it's still installed, use it.
+        if QuestShellDB and QuestShellDB.lastActiveGuide
+           and QuestShellGuides and QuestShellGuides[QuestShellDB.lastActiveGuide] then
+            QuestShell.activeGuide = QuestShellDB.lastActiveGuide
+        end
+
+        -- 2) If still no/invalid active guide, fall back to your race-based picker.
+        if (not QuestShell.activeGuide) or (not QuestShellGuides) or (not QuestShellGuides[QuestShell.activeGuide]) then
+            if QS_SelectDefaultGuideIfNeeded then QS_SelectDefaultGuideIfNeeded() end
+        end
+
+        -- 3) Make sure the per-guide state exists, then refresh UI
+        QS_EnsureDB()
+        if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
+    end)
+end
