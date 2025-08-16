@@ -5,6 +5,9 @@
 ## Version: 0.3
 ## SavedVariables: QuestShellDB
 
+## SavedVariables: QuestShellDB
+## SavedVariablesPerCharacter: QuestShellCDB
+
 core_utils.lua
 core_debug.lua
 core_debug_commands.lua

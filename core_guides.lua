@@ -7,15 +7,15 @@
 --   QS_GuideMeta(name?)                -> {title, steps}|{title, chapters}
 --   QS_GuideHasChapters(name?)         -> boolean
 --   QS_ChapterCount(name?)             -> number
---   QS_GuideState()                    -> saved-state table for active guide
+--   QS_GuideState()                    -> saved-state table for active guide (PER-CHAR)
 --   QS_CurrentChapterIndex()           -> number
 --   QS_ChapterMeta(idx)                -> chapter meta for current guide
 --   QS_GuideData()                     -> steps[] for current chapter
 --   QS_CurrentStep()                   -> step table for current step
 --   QuestShell.SetChapter(idx)         -> switches chapter, finds next uncompleted step
 --   QS_AllGuidesOrdered()              -> array of guide keys sorted by level/title
---   QuestShell.LoadGuide(name)         -> set active guide, reset chapter/step
---   QS_LoadNextGuideIfAny()            -> bool; loads next ordered guide if exists
+--   QuestShell.LoadGuide(name)         -> set active guide, reset chapter/step if first time
+--   QS_LoadNextGuideIfAny()            -> bool; loads next ordered guide (prefers nextKey)
 --   QuestShell.JumpToStep(idx)         -> set currentStep within chapter
 -- =========================
 
@@ -107,7 +107,11 @@ function QS_GuideTryAutoChain()
     return false
 end
 
--- ----- Saved state accessors -----
+-- ----- Saved state accessors (PER-CHAR) -----
+-- Uses QuestShellCDB (SavedVariablesPerCharacter) for:
+--   - guides[guideKey] = { currentChapter, currentStep, completedByChapter }
+--   - lastActiveGuide
+-- Falls back to QuestShellDB for legacy migration if needed.
 function QS_GuideState()
     -- Ensure top-level DB tables exist
     if QS_EnsureDB then QS_EnsureDB() end
@@ -115,7 +119,6 @@ function QS_GuideState()
     -- If no active guide yet, select one (by startingRace or fallback)
     if (not QuestShell.activeGuide) or (not QuestShellGuides) or (not QuestShellGuides[QuestShell.activeGuide]) then
         if QS_SelectDefaultGuideIfNeeded then QS_SelectDefaultGuideIfNeeded() end
-        -- Ensure DB now that activeGuide may have been set
         if QS_EnsureDB then QS_EnsureDB() end
     end
 
@@ -123,7 +126,19 @@ function QS_GuideState()
     if not QuestShell.activeGuide then
         return { currentChapter = 1, currentStep = 1, completedByChapter = { [1] = {} } }
     end
-    return QuestShellDB.guides[QuestShell.activeGuide]
+
+    -- Prefer per-character DB
+    if QuestShellCDB and QuestShellCDB.guides then
+        return QuestShellCDB.guides[QuestShell.activeGuide]
+    end
+
+    -- Legacy fallback (very old installs)
+    if QuestShellDB and QuestShellDB.guides then
+        return QuestShellDB.guides[QuestShell.activeGuide]
+    end
+
+    -- Last-ditch dummy
+    return { currentChapter = 1, currentStep = 1, completedByChapter = { [1] = {} } }
 end
 
 function QS_CurrentChapterIndex()
@@ -162,7 +177,6 @@ function QS_CurrentStep()
     return d[s.currentStep]
 end
 
--- Normalize st.currentStep to the first eligible & incomplete step in the current chapter
 -- Normalize st.currentStep to the first eligible & incomplete step in the current chapter
 function QS_NormalizeCurrentStep()
     local st = QS_GuideState and QS_GuideState() or nil
@@ -204,7 +218,6 @@ function QS_NormalizeCurrentStep()
     st.currentStep = cur
 end
 
-
 -- ----- Chapter switching -----
 function QuestShell.SetChapter(idx)
     local n = QS_ChapterCount()
@@ -223,7 +236,7 @@ function QuestShell.SetChapter(idx)
     local total = table.getn(steps)
     local cur = 1
     while cur <= total and (doneSet[cur] or (QS_StepIsEligible and not QS_StepIsEligible(steps[cur]))) do
-    cur = cur + 1
+        cur = cur + 1
     end
     st.currentStep = cur
 
@@ -246,7 +259,7 @@ function QS_AllGuidesOrdered()
     return names
 end
 
--- Load a guide (resets to chapter 1, step 1)
+-- Load a guide (keeps progress if it exists; initializes only first time)
 function QuestShell.LoadGuide(name)
     if not (QuestShellGuides and QuestShellGuides[name]) then
         QS_Warn("Guide not found: "..tostring(name))
@@ -256,16 +269,36 @@ function QuestShell.LoadGuide(name)
     QuestShell.activeGuide = name
     QS_EnsureDB()
 
-    -- NEW: remember across /reload
-    QuestShellDB = QuestShellDB or {}
-    QuestShellDB.lastActiveGuide = name
+    -- PER-CHAR: remember across /reload (legacy: also keep QuestShellDB.lastActiveGuide for old installs)
+    QuestShellCDB = QuestShellCDB or {}
+    QuestShellCDB.lastActiveGuide = name
+    QuestShellDB  = QuestShellDB  or {}
+    QuestShellDB.lastActiveGuide  = name  -- harmless legacy slot
 
-    local st = QuestShellDB.guides[name]
-
-    -- Only initialize if first time
-    if not st.currentChapter then st.currentChapter = 1 end
-    if not st.currentStep    then st.currentStep    = 1 end
-    st.completedByChapter = st.completedByChapter or {}
+    -- Per-character state table
+    local st = (QuestShellCDB and QuestShellCDB.guides and QuestShellCDB.guides[name])
+              or (QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[name]) -- legacy fallback
+    if not st then
+        -- Ensure per-char container exists
+        QuestShellCDB = QuestShellCDB or {}; QuestShellCDB.guides = QuestShellCDB.guides or {}
+        st = { currentChapter = 1, currentStep = 1, completedByChapter = {} }
+        QuestShellCDB.guides[name] = st
+    else
+        -- Only initialize if fields missing
+        if not st.currentChapter then st.currentChapter = 1 end
+        if not st.currentStep    then st.currentStep    = 1 end
+        st.completedByChapter = st.completedByChapter or {}
+        -- Migrate old shape if needed
+        if st.completedSteps and not st.completedByChapter then
+            st.completedByChapter = {}; st.completedByChapter[1] = st.completedSteps; st.completedSteps = nil
+        end
+        -- If state came from old account-wide DB, move it into per-char slot
+        if QuestShellDB and QuestShellDB.guides and QuestShellDB.guides[name] == st then
+            QuestShellCDB.guides = QuestShellCDB.guides or {}
+            QuestShellCDB.guides[name] = st
+            -- do not nil out old table here; QS_EnsureDB handles global migration safely
+        end
+    end
 
     if QS_NormalizeCurrentStep then QS_NormalizeCurrentStep() end
 
@@ -279,7 +312,7 @@ function QuestShell.LoadGuide(name)
     QS_UI_RefreshAll()
 end
 
--- Advance to next guide in ordered list, if any
+-- Advance to next guide in ordered list, if any (prefers nextKey)
 function QS_LoadNextGuideIfAny()
     local cur  = QuestShell.activeGuide
     local meta = (QS_GuideMeta and QS_GuideMeta(cur)) or (QuestShellGuides and QuestShellGuides[cur]) or nil
@@ -331,22 +364,29 @@ do
     local boot = CreateFrame("Frame")
     boot:RegisterEvent("VARIABLES_LOADED")
     boot:SetScript("OnEvent", function()
-        -- Ensure saved vars table exists
-        QS_EnsureDB()
+        -- Ensure saved vars tables exist (also lets core_utils handle migration)
+        if QS_EnsureDB then QS_EnsureDB() end
 
-        -- 1) If we have a saved lastActiveGuide and it's still installed, use it.
-        if QuestShellDB and QuestShellDB.lastActiveGuide
+        -- 1) Restore per-character lastActiveGuide if valid
+        if QuestShellCDB and QuestShellCDB.lastActiveGuide
+           and QuestShellGuides and QuestShellGuides[QuestShellCDB.lastActiveGuide] then
+            QuestShell.activeGuide = QuestShellCDB.lastActiveGuide
+        -- 1b) Legacy fallback: old account-wide slot (first run after update)
+        elseif QuestShellDB and QuestShellDB.lastActiveGuide
            and QuestShellGuides and QuestShellGuides[QuestShellDB.lastActiveGuide] then
             QuestShell.activeGuide = QuestShellDB.lastActiveGuide
+            -- copy into per-char memory for next time
+            QuestShellCDB = QuestShellCDB or {}
+            QuestShellCDB.lastActiveGuide = QuestShellDB.lastActiveGuide
         end
 
-        -- 2) If still no/invalid active guide, fall back to your race-based picker.
+        -- 2) If still no/invalid active guide, fall back to race-based picker.
         if (not QuestShell.activeGuide) or (not QuestShellGuides) or (not QuestShellGuides[QuestShell.activeGuide]) then
             if QS_SelectDefaultGuideIfNeeded then QS_SelectDefaultGuideIfNeeded() end
         end
 
         -- 3) Make sure the per-guide state exists, then refresh UI
-        QS_EnsureDB()
+        if QS_EnsureDB then QS_EnsureDB() end
         if QuestShellUI_UpdateAll then QuestShellUI_UpdateAll() end
     end)
 end

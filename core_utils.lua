@@ -19,22 +19,36 @@ function QS_D(m)     if QuestShell.debug then QS_Print(m) end end
 --   completedByChapter = { [chapterIndex] = { stepIdx, stepIdx, ... } }
 -- }
 function QS_EnsureDB()
-    if not QuestShellDB then QuestShellDB = { guides = {}, ui = {} } end
-    if not QuestShellDB.guides then QuestShellDB.guides = {} end
+    -- Account-wide
+    if not QuestShellDB then QuestShellDB = { ui = {} } end
     if not QuestShellDB.ui then QuestShellDB.ui = {} end
-    if QuestShellDB.lastActiveGuide == nil then QuestShellDB.lastActiveGuide = nil end
 
-    -- If there is no active guide yet, we only ensure top-level tables.
+    -- Per-character
+    if not QuestShellCDB then QuestShellCDB = { guides = {}, lastActiveGuide = nil } end
+    if not QuestShellCDB.guides then QuestShellCDB.guides = {} end
+    if QuestShellCDB.lastActiveGuide == nil then QuestShellCDB.lastActiveGuide = nil end
+
+    -- --- one-time migration from old account-wide guides to per-character ---
+    if QuestShellDB.guides then
+        -- Move the whole table into character DB and drop the old reference
+        if not QuestShellCDB.guides or (next(QuestShellCDB.guides) == nil) then
+            QuestShellCDB.guides = QuestShellDB.guides
+        end
+        QuestShellDB.guides = nil
+    end
+
+    -- No active guide yet? just ensure top-level tables
     if not QuestShell.activeGuide then return end
 
-    if not QuestShellDB.guides[QuestShell.activeGuide] then
-        QuestShellDB.guides[QuestShell.activeGuide] = {
+    -- Ensure per-character state for the active guide
+    if not QuestShellCDB.guides[QuestShell.activeGuide] then
+        QuestShellCDB.guides[QuestShell.activeGuide] = {
             currentChapter = 1,
             currentStep    = 1,
             completedByChapter = {},
         }
     else
-        local st = QuestShellDB.guides[QuestShell.activeGuide]
+        local st = QuestShellCDB.guides[QuestShell.activeGuide]
         if not st.currentChapter then st.currentChapter = 1 end
         if st.completedSteps and not st.completedByChapter then
             st.completedByChapter = {}; st.completedByChapter[1] = st.completedSteps; st.completedSteps = nil
