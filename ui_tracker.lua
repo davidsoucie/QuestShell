@@ -1,20 +1,14 @@
 -- =========================
 -- QuestShell UI — Tracker
--- Compact tracker for the current step with: header, checkbox, rows with icons.
--- Compatibility: Vanilla/Turtle (Lua 5.0)
--- =========================
--- Public:
---   QuestShellUI.Update(title, typ, body)    -- internal: called by core
---   QuestShellUI.SetFontScale(scale)         -- 0.6..1.8
--- Notes:
---   - Uses fixed slot widths for bullet/icon for reliable alignment in 1.12.
---   - No 'self' / no '#' operator; uses table.getn, etc.
---   - FIX: header "Step n/x" computes from the live current index in Update().
+-- Compact tracker for the current step (header, checkbox, objective rows).
+-- Mini "use item" button; prefers step.itemId/itemName, falls back to objectives.
+-- Uses the SAME semi-transparent tooltip background as Steps.
+-- Vanilla/Turtle (Lua 5.0) safe.
 -- =========================
 
 QuestShellUI = QuestShellUI or {}
 
--- ------------------------- Saved vars -------------------------
+-- ---------- Saved vars / opacity ----------
 local function EnsureDB()
     QuestShellDB = QuestShellDB or {}
     QuestShellDB.ui = QuestShellDB.ui or {}
@@ -24,17 +18,24 @@ local function EnsureDB()
     if QuestShellDB.ui.trackerH == nil then QuestShellDB.ui.trackerH = 160 end
     if QuestShellDB.ui.locked   == nil then QuestShellDB.ui.locked   = false end
     if QuestShellDB.ui.trackerFontScale == nil then QuestShellDB.ui.trackerFontScale = 1.0 end
+    if QuestShellDB.ui.backdropAlpha == nil then QuestShellDB.ui.backdropAlpha = 1.0 end
+end
+local function PanelA()
+    EnsureDB()
+    local a = QuestShellDB.ui.backdropAlpha or 1.0
+    if a < 0 then a = 0 elseif a > 1 then a = 1 end
+    return a
 end
 
--- ------------------------- Constants -------------------------
+-- ---------- Constants ----------
 local TEX_TALK   = "Interface\\GossipFrame\\GossipGossipIcon"
 local TEX_ACCEPT = "Interface\\GossipFrame\\AvailableQuestIcon"
 local TEX_TURNIN = "Interface\\GossipFrame\\ActiveQuestIcon"
 local TEX_KILL   = "Interface\\Icons\\Ability_DualWield"
 local TEX_LOOT   = "Interface\\Icons\\INV_Misc_Bag_08"
 local TEX_OTHER  = "Interface\\Icons\\INV_Misc_Note_01"
-local TEX_BULLET = "Interface\\Buttons\\UI-CheckBox-Up"        -- empty box
-local TEX_CHECK  = "Interface\\Buttons\\UI-CheckBox-Check"      -- tick (green when done)
+local TEX_BULLET = "Interface\\Buttons\\UI-CheckBox-Up"
+local TEX_CHECK  = "Interface\\Buttons\\UI-CheckBox-Check"
 local TEX_RUN    = "Interface\\Icons\\Ability_Rogue_Sprint"
 local TEX_USE    = "Interface\\Icons\\INV_Misc_Gear_02"
 
@@ -42,28 +43,23 @@ local LEFT_PAD, RIGHT_PAD = 8, 10
 local SLOT_W, GAP = 12, 4
 local ROW_VGAP = 3
 
--- ------------------------- Frame state -------------------------
+-- ---------- Frame state ----------
 local tracker, header, headerStepFS, chk
 local content, rowPool
 local baseHeaderSize, baseRowSize = nil, nil
 
--- Mini Use-Item button (new)
-local mini, miniIcon, miniCD, miniCountFS
+-- Mini Use-Item button
+local mini, miniIcon, miniCountFS
 local _miniLastItemId, _miniLastItemName, _miniNextPoll = nil, nil, 0
 
-local function ContentWidth()
-    return (content and content:GetWidth() or 320)
-end
+local function ContentWidth() return (content and content:GetWidth() or 320) end
 
 local function ClampAndPlace(f, x, y, fw, fh)
     if not f or not UIParent then return end
-    f:ClearAllPoints()
-    f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", x or 0, y or 0)
-    f:Show()
+    f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", x or 0, y or 0); f:Show()
     local sw, sh = UIParent:GetWidth() or 1024, UIParent:GetHeight() or 768
-    local cx = x or 0; local cy = y or 0
-    local ww = fw or (f:GetWidth() or 360)
-    local hh = fh or (f:GetHeight() or 160)
+    local cx, cy = x or 0, y or 0
+    local ww, hh = fw or (f:GetWidth() or 360), fh or (f:GetHeight() or 160)
     if cx > sw - ww then cx = sw - ww end
     if cx < 0 then cx = 0 end
     if cy > 0 then cy = 0 end
@@ -72,9 +68,8 @@ local function ClampAndPlace(f, x, y, fw, fh)
     return cx, cy
 end
 
--- ------------------------- Row renderer -------------------------
+-- ---------- Row pool ----------
 local function EnsureRowPool() if rowPool then return end; rowPool = {} end
-
 local function AcquireRow(i)
     EnsureRowPool()
     if rowPool[i] then return rowPool[i] end
@@ -100,22 +95,16 @@ local function AcquireRow(i)
     rowPool[i] = r
     return r
 end
+local function ReleaseRows(fromIndex) if not rowPool then return end; local i=fromIndex; while rowPool[i] do rowPool[i]:Hide(); i=i+1 end end
 
-local function ReleaseRows(fromIndex)
-    if not rowPool then return end
-    local i = fromIndex
-    while rowPool[i] do rowPool[i]:Hide(); i = i + 1 end
-end
-
+-- ---------- Font scale ----------
 local function QS_TrackerApplyFontScale()
     local scale = (QuestShellDB and QuestShellDB.ui and QuestShellDB.ui.trackerFontScale) or 1.3
-
     if headerStepFS then
         local f,s,fl = headerStepFS:GetFont()
         if not baseHeaderSize then baseHeaderSize = s or 12 end
         headerStepFS:SetFont(f, math.floor(baseHeaderSize * scale + 0.5), fl)
     end
-
     if rowPool then
         local i = 1
         while rowPool[i] do
@@ -130,7 +119,7 @@ local function QS_TrackerApplyFontScale()
     end
 end
 
--- Build rows for any step
+-- ---------- Build rows ----------
 local function BuildRows(step, fallbackTitle, forceComplete)
     local rows, c = {}, 0
     local stype = string.upper(step and step.type or "")
@@ -150,9 +139,7 @@ local function BuildRows(step, fallbackTitle, forceComplete)
             where = string.format("(%.1f, %.1f %s)", cmeta.x, cmeta.y, z)
         end
         c=c+1; rows[c] = { icon=TEX_RUN, text=note, bullet=false }
-        if where ~= "" then
-            c=c+1; rows[c] = { icon=nil, text=where, bullet=false }
-        end
+        if where ~= "" then c=c+1; rows[c] = { icon=nil, text=where, bullet=false } end
 
     elseif stype == "USE_ITEM" then
         local nameTxt = step and (step.itemName or ("Item ID "..tostring(step.itemId or "?")))
@@ -163,8 +150,6 @@ local function BuildRows(step, fallbackTitle, forceComplete)
     else
         local note = (step and step.note) or (fallbackTitle or "")
         c=c+1; rows[c] = { icon=nil, text=note, bullet=false }
-
-        -- Build objective rows from guide, overlaying counts when possible
         local orows = QS_BuildObjectiveRows and QS_BuildObjectiveRows(step, forceComplete) or {}
         local j = 1
         while j <= table.getn(orows) do
@@ -175,7 +160,6 @@ local function BuildRows(step, fallbackTitle, forceComplete)
             j = j + 1
         end
     end
-
     return rows
 end
 
@@ -189,124 +173,55 @@ local function RenderRows(rows)
         r:ClearAllPoints()
         r:SetPoint("TOPLEFT", prev or content, prev and "BOTTOMLEFT" or "TOPLEFT", 0, prev and -ROW_VGAP or 0)
 
-        -- bullet slot
         r.bullet:ClearAllPoints(); r.bullet:SetPoint("LEFT", r, "LEFT", 0, 0)
         if data.bullet then
             r.bullet:Show()
-            r.bullet:SetVertexColor(1, 1, 1, 1)
-            if data.done then
-                r.check:SetAlpha(1)
-                r.check:SetVertexColor(0.20, 1.00, 0.20)
-            else
-                r.check:SetAlpha(0)
-                r.check:SetVertexColor(1, 1, 1)
-            end
+            if data.done then r.check:SetAlpha(1); r.check:SetVertexColor(0.20, 1.00, 0.20)
+            else r.check:SetAlpha(0); r.check:SetVertexColor(1,1,1) end
         else
-            r.bullet:Hide()
-            r.check:SetAlpha(0)
-            r.check:SetVertexColor(1, 1, 1)
+            r.bullet:Hide(); r.check:SetAlpha(0); r.check:SetVertexColor(1,1,1)
         end
 
-        -- icon slot
         local x = SLOT_W + GAP
-        if data.icon then
-            r.icon:Show(); r.icon:SetTexture(data.icon)
-            r.icon:ClearAllPoints(); r.icon:SetPoint("LEFT", r, "LEFT", x, 0)
-            x = x + SLOT_W + GAP
-        else
-            r.icon:Hide()
-        end
+        if data.icon then r.icon:Show(); r.icon:SetTexture(data.icon); r.icon:ClearAllPoints(); r.icon:SetPoint("LEFT", r, "LEFT", x, 0); x = x + SLOT_W + GAP
+        else r.icon:Hide() end
 
-        r.text:ClearAllPoints()
-        r.text:SetPoint("LEFT", r, "LEFT", x, 0)
-        r.text:SetWidth(ContentWidth() - x)
-        r.text:SetText(data.text or "")
-
-        if data.bullet and data.done then
-            r.text:SetTextColor(0.60, 1.00, 0.60)
-        else
-            r.text:SetTextColor(1, 1, 1)
-        end
+        r.text:ClearAllPoints(); r.text:SetPoint("LEFT", r, "LEFT", x, 0)
+        r.text:SetWidth(ContentWidth() - x); r.text:SetText(data.text or "")
+        if data.bullet and data.done then r.text:SetTextColor(0.60, 1.00, 0.60) else r.text:SetTextColor(1,1,1) end
 
         r:SetWidth(ContentWidth())
         r:SetHeight(r.text:GetHeight() + 2)
         r:Show()
 
-        prev = r
-        i = i + 1
+        prev = r; i = i + 1
     end
     ReleaseRows(i)
     QS_TrackerApplyFontScale()
 end
 
--- ------------------------- Header (uses live current index) -------------------------
-local function UpdateHeaderStep(currentIndexOverride)
+-- ---------- Header ----------
+local function UpdateHeaderStep()
     local steps = (QS_GuideData and QS_GuideData()) or {}
     local n = table.getn(steps or {})
 
     local function isEligible(i)
-        local s = steps[i]
-        if not s then return false end
+        local s = steps[i]; if not s then return false end
         return (not QS_StepIsEligible) or QS_StepIsEligible(s)
     end
 
-    -- total eligible
-    local total = 0
-    local i = 1
-    while i <= n do
-        if isEligible(i) then total = total + 1 end
-        i = i + 1
-    end
+    local curIdx = 1
+    local st = QS_GuideState and QS_GuideState() or nil
+    if st and st.currentStep then curIdx = st.currentStep end
 
-    local curIdx = tonumber(currentIndexOverride)
-    if not curIdx then
-        local st = QS_GuideState and QS_GuideState() or nil
-        curIdx = (st and st.currentStep) or 1
-    end
-    if curIdx < 1 then curIdx = 1 end
-    if curIdx > n then curIdx = n end
+    local cur = 0; local i = 1
+    while i <= math.min(curIdx, n) do if isEligible(i) then cur = cur + 1 end; i = i + 1 end
+    if cur == 0 and n > 0 then cur = 1 end
 
-    local cur = 0
-    i = 1
-    while i <= curIdx do
-        if isEligible(i) then cur = cur + 1 end
-        i = i + 1
-    end
-    if cur == 0 and total > 0 then cur = 1 end
-
-    if headerStepFS then
-        headerStepFS:SetText("Step "..tostring(cur))
-    end
+    headerStepFS:SetText("Step "..tostring(cur))
 end
 
--- ------------------------- Mini Use-Item button -------------------------
-local function _FindUseItemForStep(step)
-    if not step then return nil, nil end
-    local stype = string.upper(step.type or "")
-
-    if stype == "USE_ITEM" then
-        return (step.itemId or nil), (step.itemName or nil)
-    end
-
-    if stype == "COMPLETE" then
-        if step.objectives and type(step.objectives)=="table" then
-            local i=1
-            while step.objectives[i] do
-                local o = step.objectives[i]
-                if o and string.lower(o.kind or "")=="use_item" then
-                    return (o.itemId or nil), (o.label or o.name or step.itemName or nil)
-                end
-                i = i + 1
-            end
-        end
-        if step.itemId or step.itemName then
-            return step.itemId, step.itemName
-        end
-    end
-
-    return nil, nil
-end
-
+-- ---------- Item helpers ----------
 local function _NameFromItemLink(link)
     if not link or link == "" then return nil end
     local _, _, name = string.find(link, "%[(.+)%]")
@@ -368,14 +283,24 @@ local function _CountItemInBags_ByIdOrName(id, name)
     return total
 end
 
-local function _UpdateMiniTooltip(id, name)
-    if not mini or not mini:IsShown() then return end
-    if not GameTooltip or not GameTooltip.SetBagItem then return end
-    local b, s = _FindItemInBags_ByIdOrName(id, name)
-    if not b or not s then return end
-    GameTooltip:SetOwner(mini, "ANCHOR_RIGHT")
-    GameTooltip:SetBagItem(b, s) -- pfUI-safe
-    GameTooltip:Show()
+-- Prefer step.itemId/itemName; also check objectives for kind="use_item"
+local function _FindUseItemForStep(step)
+    if not step then return nil, nil end
+    if step.itemId or step.itemName then
+        return step.itemId, step.itemName
+    end
+    local stype = string.upper(step.type or "")
+    if stype == "COMPLETE" and step.objectives and type(step.objectives)=="table" then
+        local i=1
+        while step.objectives[i] do
+            local o = step.objectives[i]
+            if o and string.lower(o.kind or "")=="use_item" then
+                return (o.itemId or nil), (o.label or o.name or step.itemName or nil)
+            end
+            i = i + 1
+        end
+    end
+    return nil, nil
 end
 
 local function _MiniUseItemClick()
@@ -392,21 +317,11 @@ local function _MiniEnsure()
     if mini then return end
     mini = CreateFrame("Button", "QuestShellMiniUse", header)
     mini:SetWidth(24); mini:SetHeight(24)
-    -- place left of the checkbox
     mini:SetPoint("RIGHT", header, "RIGHT", -28, 0)
 
     miniIcon = mini:CreateTexture(nil, "BACKGROUND")
     miniIcon:SetAllPoints(mini)
     miniIcon:SetTexture("Interface\\Icons\\INV_Misc_QuestionMark")
-
-    -- Cooldown overlay (if available in 1.12)
-    if CreateFrame then
-        local ok, cd = pcall(CreateFrame, "Cooldown", "QuestShellMiniUseCD", mini, "CooldownFrameTemplate")
-        if ok and cd then
-            miniCD = cd
-            miniCD:SetAllPoints(mini)
-        end
-    end
 
     miniCountFS = mini:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall")
     miniCountFS:SetPoint("BOTTOMRIGHT", mini, "BOTTOMRIGHT", -1, 1)
@@ -415,31 +330,25 @@ local function _MiniEnsure()
     mini:RegisterForClicks("LeftButtonUp", "RightButtonUp")
     mini:SetScript("OnClick", _MiniUseItemClick)
     mini:SetScript("OnEnter", function()
-        if _miniLastItemId or _miniLastItemName then _UpdateMiniTooltip(_miniLastItemId, _miniLastItemName) end
+        if (not _miniLastItemId) and (not _miniLastItemName) then return end
+        local b,s = _FindItemInBags_ByIdOrName(_miniLastItemId, _miniLastItemName)
+        if not b or not s then return end
+        if GameTooltip and GameTooltip.SetBagItem then
+            GameTooltip:SetOwner(mini, "ANCHOR_RIGHT")
+            GameTooltip:SetBagItem(b, s)
+            GameTooltip:Show()
+        end
     end)
-    mini:SetScript("OnLeave", function()
-        if GameTooltip then GameTooltip:Hide() end
-    end)
+    mini:SetScript("OnLeave", function() if GameTooltip then GameTooltip:Hide() end end)
 
-    -- light polling to refresh count/cooldown
     mini:SetScript("OnUpdate", function()
         _miniNextPoll = _miniNextPoll + (arg1 or 0)
-        if _miniNextPoll < 0.2 then return end
+        if _miniNextPoll < 0.25 then return end
         _miniNextPoll = 0
-
         if (not _miniLastItemId) and (not _miniLastItemName) then return end
         if not mini:IsShown() then return end
-
         local c = _CountItemInBags_ByIdOrName(_miniLastItemId, _miniLastItemName) or 0
         if c > 1 then miniCountFS:SetText(tostring(c)) else miniCountFS:SetText("") end
-
-        if miniCD and CooldownFrame_SetTimer and GetContainerItemCooldown then
-            local b,s = _FindItemInBags_ByIdOrName(_miniLastItemId, _miniLastItemName)
-            if b and s then
-                local start, dur, enable = GetContainerItemCooldown(b, s)
-                if start and dur then CooldownFrame_SetTimer(miniCD, start, dur, enable) end
-            end
-        end
     end)
 end
 
@@ -454,17 +363,12 @@ local function _ShowMiniForStep(step)
 
     _miniLastItemId, _miniLastItemName = id, name
 
-    -- set icon from bag slot if we can find it; fallback to GetItemInfo(id)
     local tex = nil
     do
         local b,s = _FindItemInBags_ByIdOrName(id, name)
         if b and s and GetContainerItemInfo then
             local t = GetContainerItemInfo(b, s)
-            if type(t) == "table" then
-                tex = t[1]
-            else
-                tex = t
-            end
+            tex = t
         end
         if (not tex) and id and GetItemInfo then
             local _nm,_link,_q,_ilvl,_req,_type,_sub,_stack,_equip, texture = GetItemInfo(id)
@@ -473,22 +377,13 @@ local function _ShowMiniForStep(step)
     end
     miniIcon:SetTexture(tex or "Interface\\Icons\\INV_Misc_QuestionMark")
 
-    -- prime count and cooldown right away
     local c = _CountItemInBags_ByIdOrName(id, name) or 0
     if c > 1 then miniCountFS:SetText(tostring(c)) else miniCountFS:SetText("") end
-
-    if miniCD and CooldownFrame_SetTimer and GetContainerItemCooldown then
-        local b,s = _FindItemInBags_ByIdOrName(id, name)
-        if b and s then
-            local start, dur, enable = GetContainerItemCooldown(b, s)
-            if start and dur then CooldownFrame_SetTimer(miniCD, start, dur, enable) end
-        end
-    end
 
     mini:Show()
 end
 
--- ------------------------- Create tracker -------------------------
+-- ---------- Create tracker ----------
 local function CreateTracker()
     EnsureDB(); if tracker then return end
 
@@ -497,12 +392,12 @@ local function CreateTracker()
     tracker:SetHeight(QuestShellDB.ui.trackerH or 160)
     tracker:SetFrameStrata("DIALOG")
     tracker:SetBackdrop({
-        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
+        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",   -- semi-transparent like Steps
         edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
         tile=true, tileSize=16, edgeSize=16,
         insets={ left=4, right=4, top=4, bottom=4 }
     })
-    tracker:SetBackdropColor(0,0,0,0.85)
+    tracker:SetBackdropColor(0,0,0, PanelA())
 
     tracker:SetMovable(true); tracker:EnableMouse(true); tracker:SetClampedToScreen(true)
     tracker:SetResizable(true)
@@ -531,24 +426,22 @@ local function CreateTracker()
         QuestShellDB.ui.trackerW, QuestShellDB.ui.trackerH = tracker:GetWidth(), tracker:GetHeight()
     end)
 
-    -- Header (drag + checkbox at right)
     header = CreateFrame("Frame", "QuestShellTrackerHeader", tracker)
     header:SetPoint("TOPLEFT", tracker, "TOPLEFT", 4, -4)
     header:SetPoint("TOPRIGHT", tracker, "TOPRIGHT", -4, -4)
     header:SetHeight(24)
     header:SetBackdrop({
-        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
+        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",   -- semi-transparent like Steps
         edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
         tile=true, tileSize=16, edgeSize=12,
         insets={ left=3, right=3, top=3, bottom=3 }
     })
-    header:SetBackdropColor(0.12,0.12,0.12,0.9)
+    header:SetBackdropColor(0,0,0, PanelA())
     header:EnableMouse(true)
     header:RegisterForDrag("LeftButton","RightButton")
     header:SetFrameLevel(tracker:GetFrameLevel()+10)
     header:SetScript("OnDragStart", function()
-        EnsureDB()
-        if QuestShellDB.ui.locked then return end
+        EnsureDB(); if QuestShellDB.ui.locked then return end
         tracker:StartMoving(); tracker.isMoving = true
     end)
     header:SetScript("OnDragStop", function()
@@ -582,7 +475,7 @@ local function CreateTracker()
         if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(cur, chk:GetChecked()) end
     end)
 
-    -- Mini use-item button lives in the header, left of the checkbox
+    -- mini use-item lives to the left of the checkbox
     _MiniEnsure()
     mini:Hide()
 
@@ -595,23 +488,20 @@ local function CreateTracker()
     QS_TrackerApplyFontScale()
 end
 
--- ------------------------- Public API -------------------------
+-- ---------- Public API ----------
 function QuestShellUI.Update(title, typ, body)
     if not tracker then CreateTracker() end
+    UpdateHeaderStep()
+
+    local step = QS_CurrentStep and QS_CurrentStep() or nil
 
     local st = QS_GuideState and QS_GuideState() or nil
     local cur = (st and st.currentStep) or 1
-
-    -- header step uses the *live* current index
-    UpdateHeaderStep(cur)
-
-    local step = QS_CurrentStep and QS_CurrentStep() or nil
     local forceComplete = (QS_UI_IsStepCompleted and QS_UI_IsStepCompleted(cur)) and true or false
 
     local rows = BuildRows(step, title or "", forceComplete)
     RenderRows(rows)
 
-    -- show/hide mini use-item icon based on step
     _ShowMiniForStep(step)
 
     if QS_UI_IsStepCompleted then chk:SetChecked(forceComplete) end

@@ -1,7 +1,6 @@
 -- =========================
--- QuestShell UI — Guides Popup
--- Small, scrollable list of all guides (no chapters).
--- Opens next to an anchor (e.g., the hearth/context menu), highlights current.
+-- QuestShell UI — Guides Popup (no chapters)
+-- Opaque black background (ignores global opacity).
 -- Vanilla/Turtle (Lua 5.0) safe.
 -- =========================
 
@@ -11,7 +10,6 @@ QuestShellUI = QuestShellUI or {}
 local popup, overlay, scroll, child
 local rowPool = {}
 
--- ---------- helpers ----------
 local function _GuideMeta(name)
     if QS_GuideMeta then return QS_GuideMeta(name) end
     local g = QuestShellGuides and QuestShellGuides[name]
@@ -21,7 +19,6 @@ end
 
 local function _AllGuidesOrdered()
     if QS_AllGuidesOrdered then return QS_AllGuidesOrdered() end
-    -- Fallback: iterate keys and sort by key
     local t, i = {}, 1
     for k,_ in pairs(QuestShellGuides or {}) do t[i] = k; i = i + 1 end
     table.sort(t)
@@ -31,9 +28,7 @@ end
 local function _FmtTitle(meta)
     local title = (meta and meta.title) or "Guide"
     local a,b = meta and meta.minLevel, meta and meta.maxLevel
-    if a or b then
-        title = string.format("%s  %s-%s", title, tostring(a or "?"), tostring(b or "?"))
-    end
+    if a or b then title = string.format("%s  %s-%s", title, tostring(a or "?"), tostring(b or "?")) end
     return title
 end
 
@@ -45,7 +40,7 @@ local function _AcquireRow(i)
     r.bg = r:CreateTexture(nil, "BACKGROUND")
     r.bg:SetAllPoints(r)
     r.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
-    r.bg:SetVertexColor(1,1,1,0)
+    r.bg:SetVertexColor(1,1,1,0) -- zebra is drawn per-row
 
     r.hl = r:CreateTexture(nil, "HIGHLIGHT")
     r.hl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
@@ -87,25 +82,25 @@ local function _EnsurePopup()
     popup:SetWidth(300); popup:SetHeight(280)
     popup:SetFrameStrata("FULLSCREEN_DIALOG")
     popup:SetBackdrop({
-        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
+        -- OPAQUE black background
+        bgFile="Interface\\Buttons\\WHITE8x8",
         edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
         tile=true, tileSize=16, edgeSize=12,
         insets={ left=4, right=4, top=4, bottom=4 }
     })
-    popup:SetBackdropColor(0,0,0,0.94)
+    popup:SetBackdropColor(0,0,0,1.0) -- force solid
 
     local titleFS = popup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleFS:SetPoint("TOPLEFT", popup, "TOPLEFT", 8, -6)
     titleFS:SetText("QuestShell – Guides")
 
-    -- Scroll
     scroll = CreateFrame("ScrollFrame", "QuestShellGuidesScroll", popup, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", popup, "TOPLEFT", 8, -28)
     scroll:SetPoint("BOTTOMRIGHT", popup, "BOTTOMRIGHT", -28, 8)
 
     child = CreateFrame("Frame", "QuestShellGuidesScrollChild", scroll)
     scroll:SetScrollChild(child)
-    child:SetWidth(300-8-28) -- popup width minus left & scrollbar padding
+    child:SetWidth(300-8-28)
     child:SetHeight(1)
 
     popup:SetScript("OnShow", function() overlay:Show() end)
@@ -113,7 +108,6 @@ local function _EnsurePopup()
     popup:Hide()
 end
 
--- ---------- content ----------
 local function _RefreshList()
     if not popup then return end
     local names = _AllGuidesOrdered()
@@ -130,24 +124,18 @@ local function _RefreshList()
         row:SetPoint("RIGHT", child, "RIGHT", 0, 0)
 
         row.text:SetText(_FmtTitle(meta))
-
-        -- Lua 5.0-safe show/hide for the current guide
         if key == cur then row.check:Show() else row.check:Hide() end
 
-        -- Lua 5.0: use math.mod, not %
-        local zebra = (math.mod(i, 2) == 0) and 0.06 or 0.03
-        row.bg:SetVertexColor(1,1,1, key == cur and 0.10 or zebra)
+        local zebra = (math.mod(i, 2) == 0) and 0.1 or 0.1
+        row.bg:SetVertexColor(1,1,1, key == cur and 0.12 or zebra)
 
         row:SetScript("OnClick", function()
-            if QuestShell and QuestShell.LoadGuide then
-                QuestShell.LoadGuide(key)
-            end
+            if QuestShell and QuestShell.LoadGuide then QuestShell.LoadGuide(key) end
             popup:Hide()
         end)
 
         row:Show()
-
-        y = y + 20 + 2
+        y = y + 22
         i = i + 1
     end
 
@@ -155,21 +143,20 @@ local function _RefreshList()
     child:SetHeight(math.max(1, y))
 end
 
--- ---------- API ----------
--- Opens next to 'anchor' (frame). If nil, centers on screen.
 function QuestShellUI.ToggleMenu(anchor)
     _EnsurePopup()
     if popup:IsShown() then
         popup:Hide()
     else
         popup:ClearAllPoints()
-        if anchor then
-            -- open below-left of anchor
-            popup:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -2, -2)
-        else
-            popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-        end
+        if anchor then popup:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -2, -2)
+        else popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0) end
         _RefreshList()
         popup:Show()
     end
+end
+
+-- keep for API symmetry, but menu ignores global alpha on purpose
+function QuestShellUI.ApplyAlpha_Menu()
+    if popup then popup:SetBackdropColor(0,0,0,1.0) end
 end
