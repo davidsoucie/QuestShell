@@ -1,8 +1,8 @@
 ## Interface: 11200
 ## Title: QuestShell
 ## Notes: Leveling/quest helper with auto-accept/turn-in and progress tracker
-## Author: You
-## Version: 0.3
+## Author: Valiusha
+## Version: 0.1
 ## SavedVariables: QuestShellDB
 
 ## SavedVariables: QuestShellDB
@@ -17,6 +17,7 @@ core_stepviz.lua
 core_stepbehave.lua
 core_events.lua
 core_commands.lua
+core_taxi.lua
 
 ui_shared.lua
 ui_tracker.lua

@@ -1,8 +1,7 @@
 -- =========================
--- QuestShell UI — Tracker
--- Compact tracker for the current step (header, checkbox, objective rows).
+-- QuestShell UI — Tracker (translucent)
 -- Mini "use item" button; prefers step.itemId/itemName, falls back to objectives.
--- Uses the SAME semi-transparent tooltip background as Steps.
+-- Renders FLIGHTPATH and FLY steps.
 -- Vanilla/Turtle (Lua 5.0) safe.
 -- =========================
 
@@ -38,6 +37,7 @@ local TEX_BULLET = "Interface\\Buttons\\UI-CheckBox-Up"
 local TEX_CHECK  = "Interface\\Buttons\\UI-CheckBox-Check"
 local TEX_RUN    = "Interface\\Icons\\Ability_Rogue_Sprint"
 local TEX_USE    = "Interface\\Icons\\INV_Misc_Gear_02"
+local TEX_FLIGHT = "Interface\\Minimap\\Tracking\\FlightMaster"
 
 local LEFT_PAD, RIGHT_PAD = 8, 10
 local SLOT_W, GAP = 12, 4
@@ -53,7 +53,6 @@ local mini, miniIcon, miniCountFS
 local _miniLastItemId, _miniLastItemName, _miniNextPoll = nil, nil, 0
 
 local function ContentWidth() return (content and content:GetWidth() or 320) end
-
 local function ClampAndPlace(f, x, y, fw, fh)
     if not f or not UIParent then return end
     f:ClearAllPoints(); f:SetPoint("TOPLEFT", UIParent, "TOPLEFT", x or 0, y or 0); f:Show()
@@ -146,6 +145,17 @@ local function BuildRows(step, fallbackTitle, forceComplete)
         local tar = (step and step.npc and step.npc.name) and (" with "..step.npc.name.." selected") or ""
         local line = "Use: "..(nameTxt or "item")..tar
         c=c+1; rows[c] = { icon=TEX_USE, text=line, bullet=false }
+
+    elseif stype == "FLIGHTPATH" then
+        local who = (step and step.npc and step.npc.name) or "the flight master"
+        local note = (step and step.note) or ("Speak to "..who.." and learn the flight path.")
+        c=c+1; rows[c] = { icon=TEX_FLIGHT, text=note, bullet=false }
+
+    elseif stype == "FLY" then
+        local who = (step and step.npc and step.npc.name) or "the flight master"
+        local dest = (step and step.destination) or "your destination"
+        local base = (step and step.note) or ("Speak to "..who.." and fly to "..dest..".")
+        c=c+1; rows[c] = { icon=TEX_FLIGHT, text=base, bullet=false }
 
     else
         local note = (step and step.note) or (fallbackTitle or "")
@@ -392,7 +402,7 @@ local function CreateTracker()
     tracker:SetHeight(QuestShellDB.ui.trackerH or 160)
     tracker:SetFrameStrata("DIALOG")
     tracker:SetBackdrop({
-        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",   -- semi-transparent like Steps
+        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
         tile=true, tileSize=16, edgeSize=16,
         insets={ left=4, right=4, top=4, bottom=4 }
@@ -400,12 +410,9 @@ local function CreateTracker()
     tracker:SetBackdropColor(0,0,0, PanelA())
 
     tracker:SetMovable(true); tracker:EnableMouse(true); tracker:SetClampedToScreen(true)
-    tracker:SetResizable(true)
-    tracker:SetMinResize(260, 120)
-    tracker:SetMaxResize(700, 320)
+    tracker:SetResizable(true); tracker:SetMinResize(260, 120); tracker:SetMaxResize(700, 320)
     tracker:SetScript("OnSizeChanged", function()
-        EnsureDB()
-        QuestShellDB.ui.trackerW, QuestShellDB.ui.trackerH = tracker:GetWidth(), tracker:GetHeight()
+        EnsureDB(); QuestShellDB.ui.trackerW, QuestShellDB.ui.trackerH = tracker:GetWidth(), tracker:GetHeight()
         QuestShellUI.Update()
     end)
 
@@ -417,21 +424,17 @@ local function CreateTracker()
     local grip = CreateFrame("Button", "QuestShellTrackerSize", tracker)
     grip:SetWidth(16); grip:SetHeight(16)
     grip:SetPoint("BOTTOMRIGHT", tracker, "BOTTOMRIGHT", -4, 4)
-    local gtex = grip:CreateTexture(nil, "ARTWORK")
-    gtex:SetAllPoints(grip)
+    local gtex = grip:CreateTexture(nil, "ARTWORK"); gtex:SetAllPoints(grip)
     gtex:SetTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
     grip:SetScript("OnMouseDown", function() tracker:StartSizing() end)
-    grip:SetScript("OnMouseUp", function()
-        tracker:StopMovingOrSizing()
-        QuestShellDB.ui.trackerW, QuestShellDB.ui.trackerH = tracker:GetWidth(), tracker:GetHeight()
-    end)
+    grip:SetScript("OnMouseUp", function() tracker:StopMovingOrSizing(); QuestShellDB.ui.trackerW, QuestShellDB.ui.trackerH = tracker:GetWidth(), tracker:GetHeight() end)
 
     header = CreateFrame("Frame", "QuestShellTrackerHeader", tracker)
     header:SetPoint("TOPLEFT", tracker, "TOPLEFT", 4, -4)
     header:SetPoint("TOPRIGHT", tracker, "TOPRIGHT", -4, -4)
     header:SetHeight(24)
     header:SetBackdrop({
-        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",   -- semi-transparent like Steps
+        bgFile="Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
         tile=true, tileSize=16, edgeSize=12,
         insets={ left=3, right=3, top=3, bottom=3 }
@@ -463,10 +466,7 @@ local function CreateTracker()
     chk:SetNormalTexture("Interface\\Buttons\\UI-CheckBox-Up")
     chk:SetPushedTexture("Interface\\Buttons\\UI-CheckBox-Down")
     chk:SetHighlightTexture("Interface\\Buttons\\UI-CheckBox-Highlight")
-    local ct = chk:CreateTexture(nil, "OVERLAY")
-    ct:SetTexture("Interface\\Buttons\\UI-CheckBox-Check")
-    ct:SetVertexColor(0.35, 0.75, 1.0)
-    ct:SetAllPoints(chk)
+    local ct = chk:CreateTexture(nil, "OVERLAY"); ct:SetTexture("Interface\\Buttons\\UI-CheckBox-Check"); ct:SetVertexColor(0.35, 0.75, 1.0); ct:SetAllPoints(chk)
     chk:SetCheckedTexture(ct)
     chk:SetScript("OnClick", function()
         local st = QS_GuideState and QS_GuideState() or nil
@@ -475,9 +475,7 @@ local function CreateTracker()
         if QS_UI_SetStepCompleted then QS_UI_SetStepCompleted(cur, chk:GetChecked()) end
     end)
 
-    -- mini use-item lives to the left of the checkbox
-    _MiniEnsure()
-    mini:Hide()
+    _MiniEnsure(); mini:Hide()
 
     content = CreateFrame("Frame", "QuestShellTrackerContent", tracker)
     content:SetPoint("TOPLEFT", tracker, "TOPLEFT", LEFT_PAD, -(4+24+6))
@@ -491,10 +489,10 @@ end
 -- ---------- Public API ----------
 function QuestShellUI.Update(title, typ, body)
     if not tracker then CreateTracker() end
+    local steps = (QS_GuideData and QS_GuideData()) or {}
     UpdateHeaderStep()
 
     local step = QS_CurrentStep and QS_CurrentStep() or nil
-
     local st = QS_GuideState and QS_GuideState() or nil
     local cur = (st and st.currentStep) or 1
     local forceComplete = (QS_UI_IsStepCompleted and QS_UI_IsStepCompleted(cur)) and true or false
@@ -517,7 +515,6 @@ function QuestShellUI.SetFontScale(scale)
     QuestShellUI.Update()
 end
 
--- boot
 local boot = CreateFrame("Frame")
 boot:RegisterEvent("VARIABLES_LOADED")
 boot:SetScript("OnEvent", function() CreateTracker() end)
