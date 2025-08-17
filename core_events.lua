@@ -901,6 +901,13 @@ ev:SetScript("OnEvent", function()
         end
 
         if step.type == "TURNIN" then
+            local choices = (GetNumQuestChoices and GetNumQuestChoices()) or 0
+            if choices > 0 then
+                -- Let the player choose; do NOT auto-pick.
+                if QS_D then QS_D("TURNIN: multiple rewards; waiting for player selection.") end
+                return
+            end
+
             if QS_D then QS_D("Picking first reward and advancing step.") end
             GetQuestReward(1)
             QS_AdvanceStep()
