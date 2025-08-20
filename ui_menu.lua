@@ -1,5 +1,5 @@
 -- =========================
--- QuestShell UI — Guides Popup (with Faction Toggle)
+-- QuestShell UI — Guides Popup (with Faction Toggle, late-load safe)
 -- Opaque black background (ignores global opacity).
 -- Vanilla/Turtle (Lua 5.0) safe.
 -- =========================
@@ -10,28 +10,20 @@ QuestShellUI = QuestShellUI or {}
 local popup, overlay, scroll, child
 local rowPool = {}
 local btnAlliance, btnHorde, titleFS
+local pumpFrame -- late-load refresher
 
 -- --- Faction helpers / pref ---
 local function _EnsureDB()
     QuestShellDB = QuestShellDB or {}; QuestShellDB.ui = QuestShellDB.ui or {}
     if QuestShellDB.ui.factionPref == nil then
         local pf = UnitFactionGroup and UnitFactionGroup("player") or "Alliance"
-        -- Normalize to "Alliance"/"Horde"
         if string.lower(pf or "") == "horde" then QuestShellDB.ui.factionPref = "Horde" else QuestShellDB.ui.factionPref = "Alliance" end
     end
 end
-
 local function _SetFactionPref(f)
-    _EnsureDB()
-    if f == "Alliance" or f == "Horde" then
-        QuestShellDB.ui.factionPref = f
-    end
+    _EnsureDB(); if f == "Alliance" or f == "Horde" then QuestShellDB.ui.factionPref = f end
 end
-
-local function _FactionPref()
-    _EnsureDB()
-    return QuestShellDB.ui.factionPref or "Alliance"
-end
+local function _FactionPref() _EnsureDB(); return QuestShellDB.ui.factionPref or "Alliance" end
 
 -- ---------- guide helpers ----------
 local function _GuideMeta(name)
@@ -45,13 +37,9 @@ end
 local function _AllGuidesOrdered(faction)
     faction = faction or _FactionPref()
     local t, i = {}, 1
-    local k, g
     for k, g in pairs(QuestShellGuides or {}) do
         local gf = (type(g)=="table" and g.faction) or nil
-        -- show guides where faction is missing OR matches selected
-        if (not gf) or gf == faction then
-            t[i] = k; i = i + 1
-        end
+        if (not gf) or gf == faction then t[i] = k; i = i + 1 end
     end
     table.sort(t, function(a,b)
         local A = _GuideMeta(a); local B = _GuideMeta(b)
@@ -80,7 +68,7 @@ local function _AcquireRow(i)
     r.bg = r:CreateTexture(nil, "BACKGROUND")
     r.bg:SetAllPoints(r)
     r.bg:SetTexture("Interface\\Buttons\\WHITE8x8")
-    r.bg:SetVertexColor(1,1,1,0) -- zebra is drawn per-row
+    r.bg:SetVertexColor(1,1,1,0)
 
     r.hl = r:CreateTexture(nil, "HIGHLIGHT")
     r.hl:SetTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight")
@@ -116,7 +104,6 @@ local function _StyleFactionButtons()
         if not b then return end
         local tex = b.tex
         if on then
-            -- selected look
             if tex then tex:SetVertexColor(1, 1, 0.2) end
             b:SetBackdropColor(0.20, 0.20, 0.20, 1.0)
         else
@@ -126,6 +113,72 @@ local function _StyleFactionButtons()
     end
     setBtn(btnAlliance, sel == "Alliance")
     setBtn(btnHorde,   sel == "Horde")
+end
+
+-- Build/refresh rows for current faction
+local function _RefreshList()
+    if not popup then return end
+    local names = _AllGuidesOrdered(_FactionPref())
+    local y, i = 0, 1
+    local cur = QuestShell and QuestShell.activeGuide
+
+    while names[i] do
+        local key  = names[i]
+        local meta = _GuideMeta(key)
+        local row  = _AcquireRow(i)
+
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
+        row:SetPoint("RIGHT",   child, "RIGHT", 0, 0)
+
+        row.text:SetText(_FmtTitle(meta))
+        if key == cur then row.check:Show() else row.check:Hide() end
+
+        local zebra = (math.mod(i, 2) == 0) and 0.10 or 0.06
+        row.bg:SetVertexColor(1,1,1, key == cur and 0.12 or zebra)
+
+        row:SetScript("OnClick", function()
+            if QuestShell and QuestShell.LoadGuide then QuestShell.LoadGuide(key) end
+            popup:Hide()
+        end)
+
+        row:Show()
+        y = y + 22
+        i = i + 1
+    end
+
+    _ReleaseRows(i)
+    child:SetHeight(math.max(1, y))
+    if scroll and scroll.UpdateScrollChildRect then scroll:UpdateScrollChildRect() end
+    _StyleFactionButtons()
+end
+
+-- tiny refresher to catch late-loaded guides
+local function _StartPump()
+    if not pumpFrame then
+        pumpFrame = CreateFrame("Frame", "QuestShellGuidesPump")
+    end
+    pumpFrame._elapsed, pumpFrame._total, pumpFrame._lastCount = 0, 0, 0
+    pumpFrame:SetScript("OnUpdate", function()
+        local dt = arg1 or 0
+        pumpFrame._elapsed = pumpFrame._elapsed + dt
+        pumpFrame._total   = pumpFrame._total + dt
+        if pumpFrame._elapsed >= 0.2 then
+            pumpFrame._elapsed = 0
+            -- if count grew for current faction -> refresh
+            local n = 0; local faction = _FactionPref()
+            for _,g in pairs(QuestShellGuides or {}) do
+                local gf = (type(g)=="table" and g.faction) or nil
+                if (not gf) or gf == faction then n = n + 1 end
+            end
+            if n ~= pumpFrame._lastCount then
+                pumpFrame._lastCount = n
+                _RefreshList()
+            end
+        end
+        -- stop after ~1.2s
+        if pumpFrame._total >= 1.2 then pumpFrame:SetScript("OnUpdate", nil) end
+    end)
 end
 
 local function _EnsurePopup()
@@ -142,13 +195,12 @@ local function _EnsurePopup()
     popup:SetWidth(320); popup:SetHeight(310)
     popup:SetFrameStrata("FULLSCREEN_DIALOG")
     popup:SetBackdrop({
-        -- OPAQUE black background
         bgFile="Interface\\Buttons\\WHITE8x8",
         edgeFile="Interface\\Tooltips\\UI-Tooltip-Border",
         tile=true, tileSize=16, edgeSize=12,
         insets={ left=4, right=4, top=4, bottom=4 }
     })
-    popup:SetBackdropColor(0,0,0,1.0) -- force solid
+    popup:SetBackdropColor(0,0,0,1.0)
 
     titleFS = popup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
     titleFS:SetPoint("TOPLEFT", popup, "TOPLEFT", 8, -6)
@@ -171,7 +223,6 @@ local function _EnsurePopup()
             insets={ left=3, right=3, top=3, bottom=3 }
         })
         b:SetBackdropColor(0.10,0.10,0.10,1.0)
-
         b.tex = b:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         b.tex:SetPoint("CENTER", b, "CENTER", 0, 0)
         b.tex:SetText(label)
@@ -182,34 +233,20 @@ local function _EnsurePopup()
     btnHorde    = makeBtn("QuestShellBtnHorde",    "Horde",    84)
 
     btnAlliance:SetScript("OnClick", function()
-        _SetFactionPref("Alliance")
-        _StyleFactionButtons()
-        -- refresh list for selected faction
+        _SetFactionPref("Alliance"); _StyleFactionButtons()
         if scroll then scroll:SetVerticalScroll(0) end
         if child then child:SetHeight(1) end
         QuestShellUI.ApplyAlpha_Menu()
-        -- rebuild
-        local _ = _StyleFactionButtons -- (no-op; keep reference alive)
-        if popup:IsShown() then
-            -- (re)build rows
-            -- call below refresh
-        end
-        -- do actual refresh
-        if QuestShellUI and QuestShellUI.ToggleMenu then
-            -- Avoid closing: directly refresh
-            QuestShellUI._RefreshGuidesListInternal()
-        end
+        _RefreshList()
+        _StartPump()
     end)
-
     btnHorde:SetScript("OnClick", function()
-        _SetFactionPref("Horde")
-        _StyleFactionButtons()
+        _SetFactionPref("Horde"); _StyleFactionButtons()
         if scroll then scroll:SetVerticalScroll(0) end
         if child then child:SetHeight(1) end
         QuestShellUI.ApplyAlpha_Menu()
-        if QuestShellUI and QuestShellUI.ToggleMenu then
-            QuestShellUI._RefreshGuidesListInternal()
-        end
+        _RefreshList()
+        _StartPump()
     end)
 
     -- Scrollframe below the faction bar
@@ -222,49 +259,12 @@ local function _EnsurePopup()
     child:SetWidth(320-8-28)
     child:SetHeight(1)
 
-    popup:SetScript("OnShow", function() overlay:Show() end)
-    popup:SetScript("OnHide", function() overlay:Hide() end)
+    popup:SetScript("OnShow", function() overlay:Show(); _RefreshList(); _StartPump() end)
+    popup:SetScript("OnHide", function() overlay:Hide(); if pumpFrame then pumpFrame:SetScript("OnUpdate", nil) end end)
     popup:Hide()
 end
 
--- Build/refresh rows for current faction
-local function _RefreshList()
-    if not popup then return end
-    local names = _AllGuidesOrdered(_FactionPref())
-    local y, i = 0, 1
-    local cur = QuestShell and QuestShell.activeGuide
-
-    while names[i] do
-        local key = names[i]
-        local meta = _GuideMeta(key)
-        local row = _AcquireRow(i)
-
-        row:ClearAllPoints()
-        row:SetPoint("TOPLEFT", child, "TOPLEFT", 0, -y)
-        row:SetPoint("RIGHT", child, "RIGHT", 0, 0)
-
-        row.text:SetText(_FmtTitle(meta))
-        if key == cur then row.check:Show() else row.check:Hide() end
-
-        local zebra = (math.mod(i, 2) == 0) and 0.10 or 0.06
-        row.bg:SetVertexColor(1,1,1, key == cur and 0.12 or zebra)
-
-        row:SetScript("OnClick", function()
-            if QuestShell and QuestShell.LoadGuide then QuestShell.LoadGuide(key) end
-            popup:Hide()
-        end)
-
-        row:Show()
-        y = y + 22
-        i = i + 1
-    end
-
-    _ReleaseRows(i)
-    child:SetHeight(math.max(1, y))
-    _StyleFactionButtons()
-end
-
--- Expose a safe internal refresh so button handlers don't re-open/close the frame
+-- Expose a safe internal refresh if anyone else wants to poke it
 function QuestShellUI._RefreshGuidesListInternal()
     _RefreshList()
 end
@@ -276,16 +276,14 @@ function QuestShellUI.ToggleMenu(anchor)
         popup:Hide()
     else
         popup:ClearAllPoints()
-
-        -- Guard against self-anchoring (can happen if caller passes popup by mistake)
         if (not anchor) or (anchor == popup) then
             popup:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
         else
             popup:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", -2, -2)
         end
-
         _RefreshList()
         popup:Show()
+        _StartPump()
     end
 end
 
