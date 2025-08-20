@@ -2,7 +2,7 @@
 ## Title: QuestShell
 ## Notes: Leveling/quest helper with auto-accept/turn-in and progress tracker
 ## Author: Valiusha
-## Version: 0.2
+## Version: 0.3
 ## SavedVariables: QuestShellDB
 
 ## SavedVariables: QuestShellDB
@@ -26,5 +26,5 @@ ui_steps.lua
 ui_menu.lua
 ui_options.lua
 
-QuestShell_Guides\Alliance\Guides.xml
-QuestShell_Guides\Horde\Guides.xml
+QuestShell_Guides\Alliance\AllianceGuides.xml
+QuestShell_Guides\Horde\HordeGuides.xml
